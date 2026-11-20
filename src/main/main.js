@@ -29,13 +29,17 @@ const { demoSessions } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
 const { createVisibility } = require('./visibility');
+const { createEventDetector } = require('./events');
+const { createToastQueue } = require('./toast');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
 // HUDDLE_DEMO_SHOT=<file.png> saves a screenshot after render and quits (demo only).
+// HUDDLE_DEMO_TOAST=1 pushes one fake toast 1 s after load (demo only).
 const DEMO = process.env.HUDDLE_DEMO === '1';
 const DEMO_THEME = DEMO ? process.env.HUDDLE_DEMO_THEME : undefined;
 const DEMO_SHOT = DEMO ? process.env.HUDDLE_DEMO_SHOT : undefined;
+const DEMO_TOAST = DEMO && process.env.HUDDLE_DEMO_TOAST === '1';
 
 const HOME = os.homedir();
 const SESSIONS_DIR = path.join(HOME, '.claude', 'sessions');
@@ -53,7 +57,17 @@ const MARGIN = 12;
 
 const MAX_HOST_ID_LEN = 100;
 
+// The toast is its own non-focusable window, top-right below the panel.
+const TOAST_WIDTH = 340;
+const TOAST_HEIGHT = 64;
+const TOAST_GAP = 8;
+const TOAST_MS = 4000;
+
 const dismissals = createDismissals();
+const detector = createEventDetector();
+const toastQueue = createToastQueue({ show: showToast, durationMs: TOAST_MS });
+let toastWin = null;
+let toastTimer = null;
 const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
 const lastSteps = new Map(); // sessionId -> last good steps
@@ -84,15 +98,17 @@ function safeSteps(s) {
   }
 }
 
+// Returns all kept sessions (before dismissal filtering) and the snapshot.
 function buildDemoSnapshot() {
   const kept = demoSessions();
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   const sessions = kept
     .filter((s) => dismissals.visible(s.sessionId, s.status))
     .map((s) => toSnapshotSession(s, s.steps));
-  return { sessions };
+  return { kept, snapshot: { sessions } };
 }
 
+// Returns all kept sessions (before dismissal filtering) and the snapshot.
 function buildSnapshot() {
   if (DEMO) return buildDemoSnapshot();
   // Sessions missing from one read stay for a short grace period.
@@ -104,7 +120,79 @@ function buildSnapshot() {
   const sessions = kept
     .filter((s) => dismissals.visible(s.sessionId, s.status))
     .map((s) => toSnapshotSession(s, safeSteps(s)));
-  return { sessions };
+  return { kept, snapshot: { sessions } };
+}
+
+// Queues a toast unless quiet mode is on or the session is dismissed.
+// The toast shows even when the panel is hidden.
+function pushToast(event, status) {
+  if (visibility.isQuiet()) return;
+  if (!dismissals.visible(event.sessionId, status)) return;
+  toastQueue.push({ sessionId: event.sessionId, name: event.name, kind: event.kind });
+}
+
+function notifyEvents(kept) {
+  const statusById = new Map(kept.map((s) => [s.sessionId, s.status]));
+  for (const event of detector.detect(kept)) pushToast(event, statusById.get(event.sessionId));
+}
+
+function toastBounds() {
+  const { workArea } = screen.getPrimaryDisplay();
+  let right = workArea.x + workArea.width - MARGIN;
+  let top = workArea.y + MARGIN;
+  if (win && !win.isDestroyed() && win.isVisible()) {
+    const b = win.getBounds();
+    right = b.x + b.width;
+    top = b.y + b.height + TOAST_GAP;
+  }
+  return { x: right - TOAST_WIDTH, y: top, width: TOAST_WIDTH, height: TOAST_HEIGHT };
+}
+
+function closeToast() {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = null;
+  if (toastWin && !toastWin.isDestroyed()) {
+    toastWin.hide();
+    toastWin.destroy();
+  }
+  toastWin = null;
+}
+
+// Shows one toast in a window that never takes focus: focusable false,
+// shown with showInactive, focus() is never called.
+function showToast(toast) {
+  closeToast();
+  const w = new BrowserWindow({
+    ...toastBounds(),
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    focusable: false,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  toastWin = w;
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  w.webContents.on('will-navigate', (event) => event.preventDefault());
+  w.once('ready-to-show', () => {
+    if (!w.isDestroyed()) w.showInactive();
+  });
+  w.loadFile(path.join(__dirname, '..', 'renderer', 'toast.html'), {
+    query: { name: String(toast.name || ''), kind: String(toast.kind) },
+  });
+  toastTimer = setTimeout(closeToast, TOAST_MS);
+  console.log(`[huddle] toast: ${toast.kind} ${toast.sessionId}`);
 }
 
 function updateVisibility(count) {
@@ -161,6 +249,11 @@ function setCollapsed(collapsed) {
 function setQuiet(quiet) {
   visibility.setQuiet(quiet);
   settings.quiet = visibility.isQuiet();
+  if (settings.quiet) {
+    // Quiet means silent now, not after the queued toasts.
+    toastQueue.clear();
+    closeToast();
+  }
   persistSettings();
   rebuildTrayMenu();
 }
@@ -189,7 +282,9 @@ function refresh() {
 }
 
 function refreshUnsafe() {
-  lastSnapshot = buildSnapshot();
+  const { kept, snapshot } = buildSnapshot();
+  lastSnapshot = snapshot;
+  notifyEvents(kept);
   const count = lastSnapshot.sessions.length;
   if (count !== lastCount) {
     console.log(`[huddle] visible sessions: ${count}`);
@@ -254,8 +349,21 @@ function createWindow() {
     win.webContents.send('huddle:snapshot', lastSnapshot);
     snapshotGate.mark(lastSnapshot);
     if (DEMO_SHOT) setTimeout(takeDemoShot, 800);
+    if (DEMO_TOAST && !demoToastSent) {
+      demoToastSent = true;
+      setTimeout(pushDemoToast, 1000);
+    }
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+}
+
+let demoToastSent = false;
+
+// Demo only: one fake 'waiting' toast for the demo waiting session, through
+// the same quiet and dismissal checks as real events.
+function pushDemoToast() {
+  const s = demoSessions().find((d) => d.status === 'waiting');
+  if (s) pushToast({ sessionId: s.sessionId, name: s.name, kind: 'waiting' }, s.status);
 }
 
 // Demo only: expand the waiting buddy, wait for the resize, save a PNG, quit.
@@ -423,6 +531,8 @@ app.on('before-quit', () => {
   if (debounceTimer) clearTimeout(debounceTimer);
   if (watcher) watcher.close();
   if (tray) tray.destroy();
+  toastQueue.clear();
+  closeToast();
 });
 
 app.on('will-quit', () => {
