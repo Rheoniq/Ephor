@@ -22,7 +22,8 @@ function createVisibility(initial) {
     isCollapsed: () => collapsed,
     isQuiet: () => quiet,
     shouldShowWindow: (sessionCount) => !hidden && sessionCount > 0,
-    // Collapsed does not block holding: a prompt auto-expands the panel.
+    // Collapsed does not block holding: the caller auto-expands the panel
+    // on a prompt (wired in Task 7).
     canHold: () => !hidden && !quiet,
   };
 }

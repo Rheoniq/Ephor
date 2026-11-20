@@ -44,6 +44,10 @@ const DEBOUNCE_MS = 150;
 const STEPS_PER_SESSION = 8;
 // The renderer reports its content height; the window starts small.
 const WIN_WIDTH = 360;
+// Collapsed, the window shrinks to the pill so no transparent strip can
+// swallow clicks meant for other apps. Fits a 3-digit count, the "!" dot,
+// the pill padding and the panel margins.
+const PILL_WIDTH = 96;
 const WIN_HEIGHT = 120;
 const MARGIN = 12;
 
@@ -132,10 +136,24 @@ function toggleHidden() {
   updateVisibility(lastSnapshot.sessions.length);
 }
 
+function windowWidth() {
+  return visibility.isCollapsed() ? PILL_WIDTH : WIN_WIDTH;
+}
+
+// Resizes to the width for the current state, keeping the right edge and top.
+function applyWindowWidth() {
+  if (!win || win.isDestroyed()) return;
+  const b = win.getBounds();
+  const width = windowWidth();
+  if (b.width === width) return;
+  win.setBounds({ x: b.x + b.width - width, y: b.y, width, height: b.height });
+}
+
 function setCollapsed(collapsed) {
   visibility.setCollapsed(collapsed);
   settings.collapsed = visibility.isCollapsed();
   persistSettings();
+  applyWindowWidth();
   sendUiState();
   rebuildTrayMenu();
 }
@@ -206,10 +224,11 @@ function startWatching() {
 
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
+  const width = windowWidth();
   win = new BrowserWindow({
-    width: WIN_WIDTH,
+    width,
     height: WIN_HEIGHT,
-    x: workArea.x + workArea.width - WIN_WIDTH - MARGIN,
+    x: workArea.x + workArea.width - width - MARGIN,
     y: workArea.y + MARGIN,
     frame: false,
     transparent: true,
@@ -342,9 +361,10 @@ ipcMain.on('huddle:content-size', (event, height) => {
   const h = clampHeight(height);
   if (h === null) return;
   const b = win.getBounds();
-  if (b.height === h) return;
-  // Width is fixed, so keeping x and y keeps the top-right anchor.
-  win.setBounds({ x: b.x, y: b.y, width: WIN_WIDTH, height: h });
+  const width = windowWidth();
+  if (b.height === h && b.width === width) return;
+  // Keep the right edge and top so the panel stays anchored top-right.
+  win.setBounds({ x: b.x + b.width - width, y: b.y, width, height: h });
 });
 
 ipcMain.on('huddle:dismiss', (event, sessionId) => {
@@ -383,7 +403,8 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (DEMO_THEME === 'dark' || DEMO_THEME === 'light') nativeTheme.themeSource = DEMO_THEME;
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
-    settings = loadSettings(settingsFile);
+    // Demo mode neither reads nor writes the real settings file.
+    settings = DEMO ? { ...SETTINGS_DEFAULTS } : loadSettings(settingsFile);
     visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
     registerHotkey();
     createWindow();
