@@ -6,7 +6,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, screen, Tray } = require('electron');
 
 const { readSessions, pidIsAlive } = require('./sessions');
 const { readSteps } = require('./steps');
@@ -16,6 +16,7 @@ const { openClaudeDesktop } = require('./focus');
 const { createGrace } = require('./grace');
 const { clampHeight, createSnapshotGate } = require('./panel');
 const { demoSessions } = require('./demo');
+const { loginItemTarget } = require('./login');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -47,6 +48,9 @@ let lastCount = -1;
 let debounceTimer = null;
 let pollTimer = null;
 let watcher = null;
+let tray = null; // module-level so it is not garbage collected
+
+const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 
 function safeSteps(s) {
   try {
@@ -187,6 +191,53 @@ async function takeDemoShot() {
   app.quit();
 }
 
+function loginTarget() {
+  return loginItemTarget({
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    portableFile: process.env.PORTABLE_EXECUTABLE_FILE,
+    appPath: app.getAppPath(),
+  });
+}
+
+function startsAtLogin() {
+  try {
+    return app.getLoginItemSettings(loginTarget()).openAtLogin;
+  } catch {
+    return false;
+  }
+}
+
+function setStartAtLogin(enabled) {
+  const target = loginTarget();
+  app.setLoginItemSettings({ openAtLogin: enabled, path: target.path, args: target.args });
+  console.log(`[huddle] start at login: ${enabled ? 'on' : 'off'}`);
+}
+
+function trayMenu() {
+  return Menu.buildFromTemplate([
+    {
+      label: 'Start at login',
+      type: 'checkbox',
+      checked: startsAtLogin(),
+      click: (item) => {
+        setStartAtLogin(item.checked);
+        tray.setContextMenu(trayMenu()); // re-read the real state
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+}
+
+function createTray() {
+  const image = nativeImage.createFromPath(ICON_PATH);
+  if (image.isEmpty()) console.error(`[huddle] tray icon missing: ${ICON_PATH}`);
+  tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
+  tray.setToolTip('Huddle');
+  tray.setContextMenu(trayMenu());
+}
+
 function fromOurWindow(event) {
   return !!win && !win.isDestroyed() && event.sender === win.webContents;
 }
@@ -231,6 +282,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (DEMO_THEME === 'dark' || DEMO_THEME === 'light') nativeTheme.themeSource = DEMO_THEME;
     createWindow();
+    createTray();
     // Start polling before the first refresh so a failing first read
     // cannot leave the app without updates.
     startWatching();
@@ -244,4 +296,5 @@ app.on('before-quit', () => {
   if (pollTimer) clearInterval(pollTimer);
   if (debounceTimer) clearTimeout(debounceTimer);
   if (watcher) watcher.close();
+  if (tray) tray.destroy();
 });
