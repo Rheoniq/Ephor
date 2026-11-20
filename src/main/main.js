@@ -9,6 +9,7 @@ const path = require('node:path');
 const {
   app,
   BrowserWindow,
+  clipboard,
   globalShortcut,
   ipcMain,
   Menu,
@@ -25,12 +26,16 @@ const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
 const { createGrace } = require('./grace');
 const { clampHeight, createSnapshotGate, toSnapshotSession } = require('./panel');
-const { demoSessions } = require('./demo');
+const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
 const { createVisibility } = require('./visibility');
 const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
+const { createHookServer } = require('./hooks');
+const { parseHook } = require('./prompts');
+const { promptView, buildResponse, matchBuddy, holdState } = require('./answering');
+const { loadOrCreateToken, setupCommand } = require('./token');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -63,6 +68,14 @@ const TOAST_HEIGHT = 64;
 const TOAST_GAP = 8;
 const TOAST_MS = 4000;
 
+// Answering prompts from the panel: Claude Code http hooks post to this
+// localhost port. A held hook ends after HOLD_MS with no decision, so
+// Desktop's own prompt takes over within the 20 s hook timeout.
+const HOOK_PORT = 47821;
+const HOLD_MS = 15000;
+const TOKEN_FILE = 'hook-token';
+const MAX_PROMPT_ID_LEN = 100;
+
 const dismissals = createDismissals();
 const detector = createEventDetector();
 const toastQueue = createToastQueue({ show: showToast, durationMs: TOAST_MS });
@@ -85,6 +98,16 @@ let settingsFile = null;
 let settings = { ...SETTINGS_DEFAULTS };
 let visibility = createVisibility(settings);
 let hotkeyNote = null; // set when the global hotkey could not be registered
+// Held hook prompts: id -> { id, sessionId, parsed, view, sawWaiting }.
+// `view` is what the snapshot shows; `parsed` keeps the raw input for the
+// response. In demo mode it holds the fake prompts and no server runs.
+const prompts = new Map();
+let hookServer = null; // set once the server listens
+let hookToken = null;
+let answeringNote = null; // tray note when answering is off
+let quitting = false;
+let lastKept = []; // kept sessions from the last read, with cwd
+let lastVisible = []; // the kept sessions that are not dismissed
 
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 
@@ -99,13 +122,20 @@ function safeSteps(s) {
   }
 }
 
+// The prompt card data for a session, or undefined.
+function promptFor(sessionId) {
+  for (const entry of prompts.values()) if (entry.sessionId === sessionId) return entry.view;
+  return undefined;
+}
+
 // Returns all kept sessions (before dismissal filtering) and the snapshot.
 function buildDemoSnapshot() {
   const kept = demoSessions();
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
-  const sessions = kept
-    .filter((s) => dismissals.visible(s.sessionId, s.status))
-    .map((s) => toSnapshotSession(s, s.steps));
+  const visible = kept.filter((s) => dismissals.visible(s.sessionId, s.status));
+  lastKept = kept;
+  lastVisible = visible;
+  const sessions = visible.map((s) => toSnapshotSession(s, s.steps, promptFor(s.sessionId)));
   return { kept, snapshot: { sessions } };
 }
 
@@ -118,10 +148,145 @@ function buildSnapshot() {
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   dismissals.prune(keptIds);
   for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
-  const sessions = kept
-    .filter((s) => dismissals.visible(s.sessionId, s.status))
-    .map((s) => toSnapshotSession(s, safeSteps(s)));
+  const visible = kept.filter((s) => dismissals.visible(s.sessionId, s.status));
+  lastKept = kept;
+  lastVisible = visible;
+  // Before the snapshot is built, so an ended hold shows no card.
+  endStaleHolds(visible);
+  const sessions = visible.map((s) => toSnapshotSession(s, safeSteps(s), promptFor(s.sessionId)));
   return { kept, snapshot: { sessions } };
+}
+
+// --- Answering prompts -----------------------------------------------------
+
+function canHoldPrompts() {
+  return !quitting && visibility.canHold() && !!win && !win.isDestroyed();
+}
+
+// Ends a held prompt with no decision (204), so Desktop shows its own.
+function cancelHold(entry) {
+  if (hookServer) hookServer.cancelSession(entry.sessionId);
+  prompts.delete(entry.id);
+}
+
+// On every registry read: ends holds whose buddy is gone or dismissed, holds
+// the panel may no longer keep (hidden, quiet), and holds of a session seen
+// 'waiting' and then not (Desktop was answered first).
+function endStaleHolds(visible) {
+  if (!hookServer || prompts.size === 0) return;
+  const visibleIds = new Set(visible.map((s) => s.sessionId));
+  const canHold = canHoldPrompts();
+  for (const entry of [...prompts.values()]) {
+    const next = holdState(entry, {
+      status: lastStatus.get(entry.sessionId),
+      visible: visibleIds.has(entry.sessionId),
+      canHold,
+    });
+    entry.sawWaiting = next.sawWaiting;
+    if (next.cancel) cancelHold(entry);
+  }
+}
+
+// Hiding the panel or turning quiet on ends every hold at once instead of
+// after HOLD_MS.
+function cancelAllHolds() {
+  if (!hookServer || prompts.size === 0) return;
+  for (const entry of [...prompts.values()]) cancelHold(entry);
+  scheduleRefresh();
+}
+
+// Server callback: the buddy a hook belongs to, or null to answer 204 at
+// once. A prompt the card cannot show in full is never held.
+function findBuddy(parsed) {
+  if (!promptView(parsed)) return null;
+  return matchBuddy(parsed, { kept: lastKept, visible: lastVisible, home: HOME });
+}
+
+// Server callback: a hook is held for `sessionId`. Tool input is never logged.
+function onPrompt({ id, sessionId, parsed }) {
+  const view = promptView(parsed);
+  // A throw makes the server end the hold with 204.
+  if (!view) throw new Error('prompt cannot be shown');
+  prompts.set(id, {
+    id,
+    sessionId,
+    parsed,
+    view: { id, ...view },
+    sawWaiting: lastStatus.get(sessionId) === 'waiting',
+  });
+  console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
+  // A collapsed pill opens so the card can be seen.
+  if (visibility.isCollapsed()) setCollapsed(false);
+  scheduleRefresh();
+}
+
+// Server callback: a hold ended without an answer from the panel (timeout,
+// client gone, cancelSession, or stop() during before-quit). It must not
+// throw and must not touch a destroyed window.
+function onCancel(id) {
+  try {
+    if (!prompts.delete(id)) return;
+    if (!quitting) scheduleRefresh();
+  } catch (err) {
+    console.error(`[huddle] ending a prompt failed: ${err && err.message ? err.message : err}`);
+  }
+}
+
+async function startAnswering() {
+  // Demo mode opens no port and neither reads nor writes the token file.
+  if (DEMO) return;
+  try {
+    hookToken = loadOrCreateToken(path.join(app.getPath('userData'), TOKEN_FILE));
+  } catch (err) {
+    console.error(`[huddle] hook token could not be saved: ${err && err.message ? err.message : err}`);
+    answeringNote = 'Answering off: token could not be saved';
+    rebuildTrayMenu();
+    return;
+  }
+  const server = createHookServer({
+    token: hookToken,
+    port: HOOK_PORT,
+    holdMs: HOLD_MS,
+    canHold: canHoldPrompts,
+    findBuddy,
+    onPrompt,
+    onCancel,
+  });
+  let state;
+  try {
+    state = await server.start();
+  } catch (err) {
+    console.error(`[huddle] hook server failed to start: ${err && err.message ? err.message : err}`);
+    state = 'failed';
+  }
+  if (state === 'listening' && !quitting) {
+    hookServer = server;
+    const address = server.address();
+    console.log(`[huddle] answering on 127.0.0.1:${address ? address.port : HOOK_PORT}`);
+  } else {
+    server.stop().catch(() => {});
+    if (state !== 'listening') {
+      answeringNote = `Answering off: port ${HOOK_PORT} in use`;
+      console.error(`[huddle] answering off: port ${HOOK_PORT} ${state}`);
+    }
+  }
+  rebuildTrayMenu();
+}
+
+// Demo only: the fake prompts go into the same table as held ones, so the
+// cards and the answer check run as for real prompts.
+function loadDemoPrompts() {
+  for (const { id, body } of demoPrompts()) {
+    const parsed = parseHook(body);
+    const view = promptView(parsed);
+    if (view) prompts.set(id, { id, sessionId: parsed.sessionId, parsed, view: { id, ...view }, sawWaiting: false });
+  }
+}
+
+function copySetupCommand() {
+  if (!hookToken) return;
+  clipboard.writeText(setupCommand(hookToken));
+  console.log('[huddle] token setup command copied');
 }
 
 // Queues a toast unless quiet mode is on or the session is dismissed.
@@ -229,6 +394,7 @@ function rebuildTrayMenu() {
 function toggleHidden() {
   visibility.toggleHidden();
   console.log(`[huddle] panel ${visibility.isHidden() ? 'hidden' : 'shown'}`);
+  if (visibility.isHidden()) cancelAllHolds();
   updateVisibility(lastSnapshot.sessions.length);
 }
 
@@ -261,6 +427,7 @@ function setQuiet(quiet) {
     // Quiet means silent now, not after the queued toasts.
     toastQueue.clear();
     closeToast();
+    cancelAllHolds();
   }
   persistSettings();
   rebuildTrayMenu();
@@ -432,7 +599,9 @@ function setStartAtLogin(enabled) {
 
 function trayMenu() {
   const items = [];
-  if (hotkeyNote) items.push({ label: hotkeyNote, enabled: false }, { type: 'separator' });
+  if (hotkeyNote) items.push({ label: hotkeyNote, enabled: false });
+  if (answeringNote) items.push({ label: answeringNote, enabled: false });
+  if (hotkeyNote || answeringNote) items.push({ type: 'separator' });
   items.push(
     { label: 'Hide / Show panel', click: () => toggleHidden() },
     {
@@ -457,6 +626,8 @@ function trayMenu() {
         tray.setContextMenu(trayMenu()); // re-read the real state
       },
     },
+    { type: 'separator' },
+    { label: 'Copy token setup command', enabled: !!hookToken, click: () => copySetupCommand() },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   );
@@ -500,6 +671,32 @@ ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
   setCollapsed(collapsed);
 });
 
+// An answer from a prompt card: { id, kind, answers?, allow? }. It counts
+// only for a held prompt and only when it fits that prompt exactly (see
+// buildResponse); anything else is ignored and the hold runs out.
+ipcMain.on('huddle:answer', (event, payload) => {
+  if (!fromOurWindow(event)) return;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+  if (typeof payload.id !== 'string' || payload.id.length > MAX_PROMPT_ID_LEN) return;
+  const entry = prompts.get(payload.id);
+  if (!entry) return;
+  const response = buildResponse(entry.parsed, payload);
+  if (!response) {
+    console.error(`[huddle] answer ignored: it does not fit the ${entry.view.kind} prompt`);
+    return;
+  }
+  prompts.delete(entry.id);
+  if (DEMO) {
+    // Demo data only, so the payload may be logged.
+    console.log(`[huddle] demo answer payload: ${JSON.stringify(payload)}`);
+    console.log(`[huddle] demo hook response: ${JSON.stringify(response)}`);
+  } else if (hookServer) {
+    const sent = hookServer.resolve(entry.id, response);
+    console.log(`[huddle] ${entry.view.kind} prompt answered: ${sent ? 'sent' : 'too late, Desktop decides'}`);
+  }
+  scheduleRefresh();
+});
+
 ipcMain.handle('huddle:open', async (event, hostSessionId) => {
   if (!fromOurWindow(event)) return 'failed';
   if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
@@ -526,24 +723,33 @@ if (!app.requestSingleInstanceLock()) {
     settings = DEMO ? { ...SETTINGS_DEFAULTS } : loadSettings(settingsFile);
     visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
     registerHotkey();
+    if (DEMO) loadDemoPrompts();
     createWindow();
     createTray();
     // Start polling before the first refresh so a failing first read
     // cannot leave the app without updates.
     startWatching();
     refresh();
+    startAnswering().catch((err) => {
+      console.error(`[huddle] answering failed to start: ${err && err.stack ? err.stack : err}`);
+    });
   });
 }
 
 app.on('window-all-closed', () => app.quit());
 
 app.on('before-quit', () => {
+  // Set first: the server's stop() below calls onCancel for each held
+  // prompt, and onCancel must not schedule a refresh while quitting.
+  quitting = true;
   if (pollTimer) clearInterval(pollTimer);
   if (debounceTimer) clearTimeout(debounceTimer);
   if (watcher) watcher.close();
   if (tray) tray.destroy();
   toastQueue.clear();
   closeToast();
+  // Held prompts end with 204, so Desktop shows its own prompts.
+  if (hookServer) hookServer.stop().catch(() => {});
 });
 
 app.on('will-quit', () => {

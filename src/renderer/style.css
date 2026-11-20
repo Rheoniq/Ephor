@@ -221,6 +221,78 @@ button:focus-visible {
 
 .steps .no-steps { font-style: italic; }
 
+/* Prompt card under the row: a question with option buttons, or a
+   permission request with Allow and Deny. Aligned with the step list. */
+.prompt {
+  margin: 0 10px 10px 56px;
+  padding: 8px 10px;
+  background: var(--steps-bg);
+  border-radius: 8px;
+}
+
+.prompt-text,
+.prompt-tool,
+.prompt-summary {
+  margin: 0 0 6px;
+}
+
+.prompt-text,
+.prompt-tool {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* One line; the full summary is in the title. */
+.prompt-summary {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 12px/1.35 "Cascadia Mono", Consolas, monospace;
+  color: var(--muted);
+}
+
+.prompt-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Labels wrap rather than cut, so the whole choice is visible. */
+.prompt-btn {
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.prompt-btn:hover { background: var(--btn-hover); }
+
+.prompt-btn.chosen {
+  border-color: var(--focus);
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
+.prompt-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.prompt-btn:disabled:hover { background: var(--card); }
+
+.prompt-btn.done,
+.prompt-btn.allow { font-weight: 600; }
+
+/* Armed: the next click on Allow sends it. */
+.prompt-btn.allow.armed,
+.prompt-btn.allow.armed:hover {
+  background: var(--wait);
+  border-color: var(--wait);
+  color: #1d1d22;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -324,6 +396,7 @@ button:focus-visible {
 @media (prefers-reduced-motion: no-preference) {
   .buddy-body,
   .icon-btn,
+  .prompt-btn,
   .panel.collapsed .pill { transition: background-color 120ms ease, color 120ms ease; }
 
   .av-orbit {

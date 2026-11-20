@@ -1,7 +1,8 @@
 'use strict';
 
 // Huddle panel renderer. Session names and steps come from local files and
-// are untrusted: they are only ever set with textContent, never innerHTML.
+// prompt text comes from hook input: all of it is untrusted and only ever set
+// with textContent, never innerHTML.
 
 (function () {
   const STATUS = {
@@ -18,8 +19,10 @@
   const pillCount = document.getElementById('pill-count');
   const pillAlert = document.getElementById('pill-alert');
   const expanded = new Set(); // sessionIds whose step list is open
+  const promptStates = new Map(); // prompt id -> HuddlePrompt state
   let sessions = [];
   let collapsed = false; // set by main through onUiState
+  let armTimer = null;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -30,6 +33,103 @@
 
   function str(v) {
     return typeof v === 'string' ? v : '';
+  }
+
+  function promptStateFor(prompt) {
+    if (!prompt || typeof prompt.id !== 'string') return null;
+    let st = promptStates.get(prompt.id);
+    if (!st) {
+      st = window.HuddlePrompt.createPromptState();
+      if (!st.show(prompt)) return null;
+      promptStates.set(prompt.id, st);
+    }
+    return st;
+  }
+
+  function promptButton(text, role, className) {
+    const b = el('button', className ? `prompt-btn ${className}` : 'prompt-btn', text);
+    b.type = 'button';
+    b.dataset.role = role;
+    return b;
+  }
+
+  function sendAnswers(id, result) {
+    if (result.done) window.huddle.answer({ id, kind: 'ask', answers: result.answers });
+    render();
+  }
+
+  // One question at a time; the answers go to main together after the last.
+  function renderAsk(st, view) {
+    const q = view.question;
+    const multi = q.multiSelect === true;
+    const card = el('div', 'prompt');
+    const options = el('div', 'prompt-options');
+    q.options.forEach((o, j) => {
+      const label = str(o.label);
+      const b = promptButton(label, `opt-${j}`);
+      if (str(o.description)) b.title = str(o.description);
+      if (multi) {
+        const on = view.chosen.includes(label);
+        b.classList.toggle('chosen', on);
+        b.setAttribute('aria-pressed', String(on));
+        b.addEventListener('click', () => {
+          st.toggleOption(label);
+          render();
+        });
+      } else {
+        b.addEventListener('click', () => sendAnswers(view.id, st.answerQuestion(label)));
+      }
+      options.append(b);
+    });
+    if (multi) {
+      const done = promptButton('Done', 'done', 'done');
+      done.disabled = view.chosen.length === 0;
+      done.addEventListener('click', () => sendAnswers(view.id, st.finishMulti()));
+      options.append(done);
+    }
+    card.append(el('p', 'prompt-text', str(q.question)), options);
+    return card;
+  }
+
+  // Re-render when a confirm click runs out, so "Confirm allow" turns back
+  // into "Allow". Waits while a pointer is down so the press keeps its button.
+  function scheduleArmExpiry() {
+    clearTimeout(armTimer);
+    const tick = () => {
+      if (hold.isHeld()) armTimer = setTimeout(tick, 100);
+      else render();
+    };
+    armTimer = setTimeout(tick, window.HuddlePrompt.ARM_MS + 50);
+  }
+
+  // Allow needs a second click within ARM_MS; Deny is one click.
+  function renderPermission(st, view) {
+    const card = el('div', 'prompt permission');
+    const summary = el('p', 'prompt-summary', str(view.summary));
+    summary.title = str(view.summary);
+    const allow = promptButton(view.armed ? 'Confirm allow' : 'Allow', 'allow', view.armed ? 'allow armed' : 'allow');
+    allow.addEventListener('click', () => {
+      if (st.armAllow() === 'send') window.huddle.answer({ id: view.id, kind: 'permission', allow: true });
+      else scheduleArmExpiry();
+      render();
+    });
+    const deny = promptButton('Deny', 'deny', 'deny');
+    deny.addEventListener('click', () => {
+      if (st.deny()) window.huddle.answer({ id: view.id, kind: 'permission', allow: false });
+      render();
+    });
+    const options = el('div', 'prompt-options');
+    options.append(allow, deny);
+    card.append(el('p', 'prompt-tool', str(view.toolName)), summary, options);
+    return card;
+  }
+
+  // The card for a held prompt, or null (none, malformed, or already answered).
+  function renderPrompt(prompt) {
+    const st = promptStateFor(prompt);
+    const view = st && st.current();
+    if (!view || view.answered) return null;
+    return view.kind === 'ask' ? renderAsk(st, view) : renderPermission(st, view);
   }
 
   function renderBuddy(s) {
@@ -75,6 +175,9 @@
     row.append(body, open, dismiss);
     li.append(row);
 
+    const card = s.prompt ? renderPrompt(s.prompt) : null;
+    if (card) li.append(card);
+
     if (isOpen) {
       const steps = Array.isArray(s.steps) ? s.steps.filter((x) => typeof x === 'string') : [];
       const ol = el('ol', 'steps');
@@ -98,6 +201,9 @@
 
     const ids = new Set(sessions.map((s) => str(s.sessionId)));
     for (const id of expanded) if (!ids.has(id)) expanded.delete(id);
+    // A prompt no longer in the snapshot was answered, timed out or ended.
+    const promptIds = new Set(sessions.map((s) => (s && s.prompt ? s.prompt.id : null)));
+    for (const id of promptStates.keys()) if (!promptIds.has(id)) promptStates.delete(id);
 
     count.textContent = sessions.length ? String(sessions.length) : '';
     panel.classList.toggle('collapsed', collapsed);

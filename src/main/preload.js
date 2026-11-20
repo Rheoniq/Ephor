@@ -21,4 +21,8 @@ contextBridge.exposeInMainWorld('huddle', {
   onUiState(cb) {
     ipcRenderer.on('huddle:ui-state', (_event, state) => cb(state));
   },
+  // { id, kind, answers?, allow? }; main checks it against the held prompt.
+  answer(payload) {
+    ipcRenderer.send('huddle:answer', payload);
+  },
 });

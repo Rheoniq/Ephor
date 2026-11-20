@@ -23,6 +23,21 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
   });
 });
 
+test('toSnapshotSession adds a prompt only when one is given', () => {
+  const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'waiting', cwd: 'C:\\x' };
+  const prompt = { id: 'p1', kind: 'permission', toolName: 'Bash', summary: 'npm test' };
+  assert.deepEqual(toSnapshotSession(s, [], prompt), {
+    sessionId: 'a',
+    hostSessionId: 'local_a',
+    name: 'N',
+    status: 'waiting',
+    steps: [],
+    prompt,
+  });
+  assert.equal('prompt' in toSnapshotSession(s, [], null), false);
+  assert.equal('prompt' in toSnapshotSession(s, []), false);
+});
+
 test('snapshot gate ignores changes in fields that are not sent', () => {
   const g = createSnapshotGate();
   const base = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy' };
