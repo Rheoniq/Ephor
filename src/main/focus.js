@@ -30,6 +30,7 @@ function focusClaudeWindow() {
       resolve(false);
       return;
     }
+    // Size limit: the Windows command line caps at 32767 chars; this ~1.3 KB script encodes to ~3.5 KB.
     const encoded = Buffer.from(script, 'utf16le').toString('base64');
     execFile(
       'powershell.exe',
@@ -53,6 +54,12 @@ async function openClaudeDesktop(hostSessionId, deps = defaultDeps()) {
   }
   try {
     await deps.openExternal(deepLinkUrl(hostSessionId));
+    // Best-effort raise: covers a link the app ignores or a minimized window.
+    try {
+      await deps.focusWindow();
+    } catch {
+      // ignored: the link already went out
+    }
     return 'deeplink';
   } catch {
     // fall through to focus

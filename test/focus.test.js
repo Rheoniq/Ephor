@@ -28,11 +28,19 @@ test('builds the verified continue deep link from the session id', () => {
   assert.equal(deepLinkUrl(ID), `claude://code/continue?session=${ID}`);
 });
 
-test('uses the deep link when it opens', async () => {
+test('uses the deep link when it opens, then focuses once', async () => {
   const { deps, calls } = fakeDeps();
   assert.equal(await openClaudeDesktop(ID, deps), 'deeplink');
   assert.deepEqual(calls.open, [`claude://code/continue?session=${ID}`]);
-  assert.equal(calls.focus, 0);
+  assert.equal(calls.focus, 1);
+});
+
+test('deep link result stands when the follow-up focus fails or throws', async () => {
+  for (const focus of [false, 'reject']) {
+    const { deps, calls } = fakeDeps({ focus });
+    assert.equal(await openClaudeDesktop(ID, deps), 'deeplink');
+    assert.equal(calls.focus, 1);
+  }
 });
 
 test('falls back to focusing the window when the deep link fails', async () => {
