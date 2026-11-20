@@ -1,0 +1,14 @@
+{
+  "name": "huddle",
+  "version": "0.1.0",
+  "description": "Standalone panel showing Claude Desktop sessions",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "electron": "^41.7.1"
+  }
+}
