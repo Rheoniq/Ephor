@@ -5,9 +5,9 @@
 
 (function () {
   const STATUS = {
-    busy: { glyph: '', label: 'Busy' },
-    waiting: { glyph: '!', label: 'Waiting for you' },
-    idle: { glyph: '', label: 'Idle' },
+    busy: { label: 'Busy' },
+    waiting: { label: 'Waiting for you' },
+    idle: { label: 'Idle' },
   };
 
   const panel = document.getElementById('panel');
@@ -48,9 +48,8 @@
     body.dataset.role = 'body';
     body.setAttribute('aria-expanded', String(isOpen));
     body.title = name;
-    const dot = el('span', `dot ${status}`, STATUS[status].glyph);
-    dot.setAttribute('aria-hidden', 'true');
-    body.append(dot, el('span', 'sr-only', `${STATUS[status].label}: `), el('span', 'name', name));
+    const avatar = window.HuddleAvatar.createAvatar(document, id, status);
+    body.append(avatar, el('span', 'sr-only', `${STATUS[status].label}: `), el('span', 'name', name));
     body.addEventListener('click', () => {
       if (expanded.has(id)) expanded.delete(id);
       else expanded.add(id);

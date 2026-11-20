@@ -1,24 +1,30 @@
 /* Toast window styles; colors follow the panel tokens in style.css. */
 :root {
   color-scheme: light dark;
-  --bg: rgba(250, 250, 252, 0.97);
+  --card: #ffffff;
   --fg: #1d1d22;
-  --muted: #6b6b76;
-  --border: rgba(0, 0, 0, 0.12);
+  --muted: #62626d;
+  --border: rgba(0, 0, 0, 0.08);
+  --idle: #a3a3ad;
   --busy: #2f9e5a;
   --wait: #d97706;
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  --wait-bg: rgba(245, 158, 11, 0.10);
+  --wait-text: #b45309;
+  --shadow: 0 4px 12px rgba(20, 20, 40, 0.16), 0 1px 3px rgba(20, 20, 40, 0.10);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: rgba(32, 32, 38, 0.97);
+    --card: #1e1e24;
     --fg: #ececf1;
-    --muted: #a0a0ab;
-    --border: rgba(255, 255, 255, 0.12);
+    --muted: #a3a3ae;
+    --border: rgba(255, 255, 255, 0.09);
+    --idle: #6e6e7a;
     --busy: #4cc27a;
     --wait: #fbbf24;
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    --wait-bg: rgba(251, 191, 36, 0.10);
+    --wait-text: #fbbf24;
+    --shadow: 0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -39,21 +45,25 @@ body {
 }
 
 .toast {
+  --accent: var(--idle);
   margin: 6px;
   height: calc(100% - 12px);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 0 12px;
-  background: var(--bg);
+  padding: 0 14px 0 16px;
+  background: var(--card);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--muted);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: 12px;
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow);
 }
 
-.toast[data-kind="waiting"] { border-left-color: var(--wait); }
-.toast[data-kind="finished"] { border-left-color: var(--busy); }
+.toast[data-kind="waiting"] {
+  --accent: var(--wait);
+  background: linear-gradient(var(--wait-bg), var(--wait-bg)), var(--card);
+}
+
+.toast[data-kind="finished"] { --accent: var(--busy); }
 
 .toast-name {
   font-weight: 600;
@@ -62,5 +72,12 @@ body {
   text-overflow: ellipsis;
 }
 
-.toast-kind { color: var(--muted); }
-.toast[data-kind="waiting"] .toast-kind { color: var(--wait); }
+.toast-kind {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.toast[data-kind="waiting"] .toast-kind {
+  color: var(--wait-text);
+  font-weight: 600;
+}
