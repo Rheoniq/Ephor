@@ -12,4 +12,7 @@ contextBridge.exposeInMainWorld('huddle', {
   open(hostSessionId) {
     return ipcRenderer.invoke('huddle:open', hostSessionId);
   },
+  reportHeight(h) {
+    ipcRenderer.send('huddle:content-size', h);
+  },
 });

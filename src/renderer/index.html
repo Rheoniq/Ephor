@@ -1,9 +1,19 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
 <title>Huddle</title>
+<link rel="stylesheet" href="style.css">
 </head>
-<body>Huddle placeholder (Task 5 builds the UI)</body>
+<body>
+<main class="panel" id="panel">
+  <header class="handle" title="Drag to move">
+    <span class="handle-title">Huddle</span>
+    <span class="handle-count" id="count"></span>
+  </header>
+  <ul class="buddies" id="buddies" aria-label="Sessions"></ul>
+</main>
+<script src="renderer.js"></script>
+</body>
 </html>
