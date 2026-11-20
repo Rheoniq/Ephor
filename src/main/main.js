@@ -13,6 +13,7 @@ const { readSteps } = require('./steps');
 const { createDismissals } = require('./dismissals');
 const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
+const { createGrace } = require('./grace');
 
 const HOME = os.homedir();
 const SESSIONS_DIR = path.join(HOME, '.claude', 'sessions');
@@ -24,7 +25,11 @@ const WIN_WIDTH = 360;
 const WIN_HEIGHT = 520;
 const MARGIN = 12;
 
+const MAX_HOST_ID_LEN = 100;
+
 const dismissals = createDismissals();
+const grace = createGrace(2);
+const lastSteps = new Map(); // sessionId -> last good steps
 let win = null;
 let lastSnapshot = { sessions: [] };
 let lastStatus = new Map(); // sessionId -> status, from the last registry read
@@ -33,16 +38,27 @@ let debounceTimer = null;
 let pollTimer = null;
 let watcher = null;
 
+function safeSteps(s) {
+  try {
+    const steps = readSteps(transcriptPath(HOME, s.cwd, s.sessionId), STEPS_PER_SESSION);
+    lastSteps.set(s.sessionId, steps);
+    return steps;
+  } catch (err) {
+    console.error(`[huddle] reading steps for ${s.sessionId} failed: ${err.message}`);
+    return lastSteps.get(s.sessionId) || [];
+  }
+}
+
 function buildSnapshot() {
-  const all = readSessions(SESSIONS_DIR, pidIsAlive);
-  lastStatus = new Map(all.map((s) => [s.sessionId, s.status]));
-  dismissals.prune(all.map((s) => s.sessionId));
-  const sessions = all
+  // Sessions missing from one read stay for a short grace period.
+  const kept = grace.apply(readSessions(SESSIONS_DIR, pidIsAlive));
+  const keptIds = kept.map((s) => s.sessionId);
+  lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
+  dismissals.prune(keptIds);
+  for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
+  const sessions = kept
     .filter((s) => dismissals.visible(s.sessionId, s.status))
-    .map((s) => ({
-      ...s,
-      steps: readSteps(transcriptPath(HOME, s.cwd, s.sessionId), STEPS_PER_SESSION),
-    }));
+    .map((s) => ({ ...s, steps: safeSteps(s) }));
   return { sessions };
 }
 
@@ -57,6 +73,15 @@ function updateVisibility(count) {
 
 function refresh() {
   debounceTimer = null;
+  try {
+    refreshUnsafe();
+  } catch (err) {
+    // Keep lastSnapshot and keep polling; the next refresh may succeed.
+    console.error(`[huddle] refresh failed: ${err && err.stack ? err.stack : err}`);
+  }
+}
+
+function refreshUnsafe() {
   lastSnapshot = buildSnapshot();
   const count = lastSnapshot.sessions.length;
   if (count !== lastCount) {
@@ -106,25 +131,48 @@ function createWindow() {
       sandbox: true,
     },
   });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event) => event.preventDefault());
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('huddle:snapshot', lastSnapshot);
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 }
 
-ipcMain.on('huddle:dismiss', (_event, sessionId) => {
+function fromOurWindow(event) {
+  return !!win && !win.isDestroyed() && event.sender === win.webContents;
+}
+
+ipcMain.on('huddle:dismiss', (event, sessionId) => {
+  if (!fromOurWindow(event)) return;
   if (typeof sessionId !== 'string' || !lastStatus.has(sessionId)) return;
   dismissals.dismiss(sessionId, lastStatus.get(sessionId));
   scheduleRefresh();
 });
 
-ipcMain.handle('huddle:open', (_event, hostSessionId) => openClaudeDesktop(hostSessionId));
-
-app.whenReady().then(() => {
-  createWindow();
-  refresh();
-  startWatching();
+ipcMain.handle('huddle:open', async (event, hostSessionId) => {
+  if (!fromOurWindow(event)) return 'failed';
+  if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
+  if (!lastSnapshot.sessions.some((s) => s.hostSessionId === hostSessionId)) return 'failed';
+  return openClaudeDesktop(hostSessionId);
 });
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Keep the single panel; just re-apply the visibility rule.
+    updateVisibility(lastSnapshot.sessions.length);
+  });
+
+  app.whenReady().then(() => {
+    createWindow();
+    // Start polling before the first refresh so a failing first read
+    // cannot leave the app without updates.
+    startWatching();
+    refresh();
+  });
+}
 
 app.on('window-all-closed', () => app.quit());
 
