@@ -49,6 +49,18 @@ test('falls back to focusing the window when the deep link fails', async () => {
   assert.equal(calls.focus, 1);
 });
 
+test('a focus that never settles is bounded by focusTimeoutMs', async () => {
+  const never = () => new Promise(() => {});
+  const ok = { openExternal: async () => {}, focusWindow: never, focusTimeoutMs: 20 };
+  assert.equal(await openClaudeDesktop(ID, ok), 'deeplink');
+  const bad = {
+    openExternal: async () => { throw new Error('no handler'); },
+    focusWindow: never,
+    focusTimeoutMs: 20,
+  };
+  assert.equal(await openClaudeDesktop(ID, bad), 'failed');
+});
+
 test('returns failed when the deep link and focus both fail', async () => {
   const a = fakeDeps({ open: 'reject', focus: false });
   assert.equal(await openClaudeDesktop(ID, a.deps), 'failed');

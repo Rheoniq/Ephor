@@ -45,31 +45,45 @@ function defaultDeps() {
   return {
     openExternal: (url) => require('electron').shell.openExternal(url),
     focusWindow: focusClaudeWindow,
+    focusTimeoutMs: DEFAULT_FOCUS_TIMEOUT_MS,
   };
+}
+
+const DEFAULT_FOCUS_TIMEOUT_MS = 3000;
+
+// Runs focusWindow but never waits longer than timeoutMs: the execFile
+// callback may never fire if a child (csc.exe from Add-Type) keeps the pipes
+// open. Resolves true only on a truthy result in time; errors and timeouts are
+// false. The timer is cleared so it does not hold the process open.
+function focusWithTimeout(focusWindow, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const attempt = Promise.resolve()
+    .then(() => focusWindow())
+    .then((ok) => Boolean(ok), () => false);
+  return Promise.race([attempt, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function openClaudeDesktop(hostSessionId, deps = defaultDeps()) {
   if (typeof hostSessionId !== 'string' || !SESSION_ID_RE.test(hostSessionId)) {
     return 'failed';
   }
+  const timeoutMs = deps.focusTimeoutMs ?? DEFAULT_FOCUS_TIMEOUT_MS;
+  let linked = false;
   try {
     await deps.openExternal(deepLinkUrl(hostSessionId));
-    // Best-effort raise: covers a link the app ignores or a minimized window.
-    try {
-      await deps.focusWindow();
-    } catch {
-      // ignored: the link already went out
-    }
-    return 'deeplink';
+    linked = true;
   } catch {
     // fall through to focus
   }
-  try {
-    if (await deps.focusWindow()) return 'focus';
-  } catch {
-    // fall through
+  if (linked) {
+    // Best-effort raise: covers a link the app ignores or a minimized window.
+    await focusWithTimeout(deps.focusWindow, timeoutMs);
+    return 'deeplink';
   }
-  return 'failed';
+  return (await focusWithTimeout(deps.focusWindow, timeoutMs)) ? 'focus' : 'failed';
 }
 
 module.exports = { openClaudeDesktop, deepLinkUrl, focusClaudeWindow, SESSION_ID_RE };
