@@ -68,6 +68,7 @@ const detector = createEventDetector();
 const toastQueue = createToastQueue({ show: showToast, durationMs: TOAST_MS });
 let toastWin = null;
 let toastTimer = null;
+let demoToastSent = false;
 const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
 const lastSteps = new Map(); // sessionId -> last good steps
@@ -162,6 +163,11 @@ function closeToast() {
 // shown with showInactive, focus() is never called.
 function showToast(toast) {
   closeToast();
+  // A toast may wait in the queue; re-check quiet and dismissal at show time.
+  // A session that is gone from the last read is skipped too.
+  if (visibility.isQuiet()) return;
+  if (!lastStatus.has(toast.sessionId)) return;
+  if (!dismissals.visible(toast.sessionId, lastStatus.get(toast.sessionId))) return;
   const w = new BrowserWindow({
     ...toastBounds(),
     frame: false,
@@ -182,6 +188,8 @@ function showToast(toast) {
     },
   });
   toastWin = w;
+  // Click-through: clicks reach whatever is underneath, e.g. a player's controls.
+  w.setIgnoreMouseEvents(true);
   w.setAlwaysOnTop(true, 'screen-saver');
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -284,7 +292,12 @@ function refresh() {
 function refreshUnsafe() {
   const { kept, snapshot } = buildSnapshot();
   lastSnapshot = snapshot;
-  notifyEvents(kept);
+  try {
+    notifyEvents(kept);
+  } catch (err) {
+    // A toast failure must not skip this refresh's panel update.
+    console.error(`[huddle] toast events failed: ${err && err.stack ? err.stack : err}`);
+  }
   const count = lastSnapshot.sessions.length;
   if (count !== lastCount) {
     console.log(`[huddle] visible sessions: ${count}`);
@@ -356,8 +369,6 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 }
-
-let demoToastSent = false;
 
 // Demo only: one fake 'waiting' toast for the demo waiting session, through
 // the same quiet and dismissal checks as real events.
