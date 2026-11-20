@@ -51,3 +51,25 @@ test('prune forgets sessions not in liveIds', () => {
   assert.strictEqual(d.visible('a', 'idle'), true);
   assert.strictEqual(d.visible('b', 'idle'), false);
 });
+
+for (const s of ['busy', 'waiting']) {
+  test(`dismiss at ${s}, idle, then ${s} again becomes visible and clears`, () => {
+    const d = createDismissals();
+    d.dismiss('a', s);
+    assert.strictEqual(d.visible('a', 'idle'), false);
+    assert.strictEqual(d.visible('a', s), true);
+    assert.strictEqual(d.visible('a', 'idle'), true);
+  });
+}
+
+test('repeated dismiss: latest wins', () => {
+  const d = createDismissals();
+  d.dismiss('a', 'idle');
+  d.dismiss('a', 'busy');
+  assert.strictEqual(d.visible('a', 'busy'), false);
+  assert.strictEqual(d.visible('a', 'waiting'), true);
+});
+
+test('unknown id is visible', () => {
+  assert.strictEqual(createDismissals().visible('nope', 'idle'), true);
+});

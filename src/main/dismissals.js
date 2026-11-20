@@ -16,6 +16,7 @@ function createDismissals() {
       dismissed.delete(sessionId);
       return true;
     }
+    if (status === 'idle') dismissed.set(sessionId, 'idle');
     return false;
   }
 
