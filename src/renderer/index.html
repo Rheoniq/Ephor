@@ -11,7 +11,12 @@
   <header class="handle" title="Drag to move">
     <span class="handle-title">Huddle</span>
     <span class="handle-count" id="count"></span>
+    <button type="button" class="icon-btn collapse" id="collapse" data-role="collapse" aria-label="Collapse panel" title="Collapse to a pill">-</button>
   </header>
+  <button type="button" class="pill" id="pill" data-role="pill" aria-label="Expand panel">
+    <span class="pill-count" id="pill-count"></span>
+    <span class="pill-alert" id="pill-alert" aria-hidden="true" hidden>!</span>
+  </button>
   <ul class="buddies" id="buddies" aria-label="Sessions"></ul>
 </main>
 <script src="hold.js"></script>

@@ -6,7 +6,17 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, screen, Tray } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  screen,
+  Tray,
+} = require('electron');
 
 const { readSessions, pidIsAlive } = require('./sessions');
 const { readSteps } = require('./steps');
@@ -17,6 +27,8 @@ const { createGrace } = require('./grace');
 const { clampHeight, createSnapshotGate, toSnapshotSession } = require('./panel');
 const { demoSessions } = require('./demo');
 const { loginItemTarget } = require('./login');
+const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
+const { createVisibility } = require('./visibility');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -49,6 +61,11 @@ let debounceTimer = null;
 let pollTimer = null;
 let watcher = null;
 let tray = null; // module-level so it is not garbage collected
+// Settings are loaded in app.whenReady; until then the defaults apply.
+let settingsFile = null;
+let settings = { ...SETTINGS_DEFAULTS };
+let visibility = createVisibility(settings);
+let hotkeyNote = null; // set when the global hotkey could not be registered
 
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 
@@ -88,11 +105,59 @@ function buildSnapshot() {
 
 function updateVisibility(count) {
   if (!win || win.isDestroyed()) return;
-  if (count === 0) {
+  if (!visibility.shouldShowWindow(count)) {
     if (win.isVisible()) win.hide();
   } else if (!win.isVisible()) {
     win.showInactive();
   }
+}
+
+function persistSettings() {
+  // Demo mode never writes the settings file.
+  if (!DEMO && settingsFile) saveSettings(settingsFile, settings);
+}
+
+function sendUiState() {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send('huddle:ui-state', { collapsed: visibility.isCollapsed() });
+}
+
+function rebuildTrayMenu() {
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(trayMenu());
+}
+
+function toggleHidden() {
+  visibility.toggleHidden();
+  console.log(`[huddle] panel ${visibility.isHidden() ? 'hidden' : 'shown'}`);
+  updateVisibility(lastSnapshot.sessions.length);
+}
+
+function setCollapsed(collapsed) {
+  visibility.setCollapsed(collapsed);
+  settings.collapsed = visibility.isCollapsed();
+  persistSettings();
+  sendUiState();
+  rebuildTrayMenu();
+}
+
+function setQuiet(quiet) {
+  visibility.setQuiet(quiet);
+  settings.quiet = visibility.isQuiet();
+  persistSettings();
+  rebuildTrayMenu();
+}
+
+function registerHotkey() {
+  const accel = settings.hotkey;
+  let ok = false;
+  try {
+    ok = globalShortcut.register(accel, toggleHidden);
+  } catch (err) {
+    console.error(`[huddle] hotkey ${accel} rejected: ${err && err.message ? err.message : err}`);
+    ok = false;
+  }
+  hotkeyNote = ok ? null : `Hotkey ${accel} unavailable`;
+  if (!ok) console.error(`[huddle] ${hotkeyNote}`);
 }
 
 function refresh() {
@@ -160,10 +225,13 @@ function createWindow() {
       sandbox: true,
     },
   });
+  // 'screen-saver' keeps the panel above borderless full-screen windows.
+  win.setAlwaysOnTop(true, 'screen-saver');
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
   win.webContents.on('did-finish-load', () => {
-    // A (re)loaded page has nothing yet: always send the current snapshot.
+    // A (re)loaded page has nothing yet: always send the current state.
+    sendUiState();
     win.webContents.send('huddle:snapshot', lastSnapshot);
     snapshotGate.mark(lastSnapshot);
     if (DEMO_SHOT) setTimeout(takeDemoShot, 800);
@@ -225,7 +293,23 @@ function setStartAtLogin(enabled) {
 }
 
 function trayMenu() {
-  return Menu.buildFromTemplate([
+  const items = [];
+  if (hotkeyNote) items.push({ label: hotkeyNote, enabled: false }, { type: 'separator' });
+  items.push(
+    { label: 'Hide / Show panel', click: () => toggleHidden() },
+    {
+      label: 'Collapse panel',
+      type: 'checkbox',
+      checked: visibility.isCollapsed(),
+      click: (item) => setCollapsed(item.checked),
+    },
+    {
+      label: 'Quiet mode',
+      type: 'checkbox',
+      checked: visibility.isQuiet(),
+      click: (item) => setQuiet(item.checked),
+    },
+    { type: 'separator' },
     {
       label: 'Start at login',
       type: 'checkbox',
@@ -237,7 +321,8 @@ function trayMenu() {
     },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
-  ]);
+  );
+  return Menu.buildFromTemplate(items);
 }
 
 function createTray() {
@@ -270,6 +355,12 @@ ipcMain.on('huddle:dismiss', (event, sessionId) => {
   scheduleRefresh();
 });
 
+ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
+  if (!fromOurWindow(event)) return;
+  if (typeof collapsed !== 'boolean') return;
+  setCollapsed(collapsed);
+});
+
 ipcMain.handle('huddle:open', async (event, hostSessionId) => {
   if (!fromOurWindow(event)) return 'failed';
   if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
@@ -291,6 +382,10 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     if (DEMO_THEME === 'dark' || DEMO_THEME === 'light') nativeTheme.themeSource = DEMO_THEME;
+    settingsFile = path.join(app.getPath('userData'), 'settings.json');
+    settings = loadSettings(settingsFile);
+    visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
+    registerHotkey();
     createWindow();
     createTray();
     // Start polling before the first refresh so a failing first read
@@ -307,4 +402,8 @@ app.on('before-quit', () => {
   if (debounceTimer) clearTimeout(debounceTimer);
   if (watcher) watcher.close();
   if (tray) tray.destroy();
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });

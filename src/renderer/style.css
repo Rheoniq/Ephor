@@ -207,3 +207,48 @@ button:focus-visible {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Collapse button and collapsed pill. Functional rules only; styled in Task 3. */
+.handle .handle-count { margin-left: auto; }
+
+.handle .collapse {
+  -webkit-app-region: no-drag;
+  margin-left: 6px;
+}
+
+.pill { display: none; }
+
+.panel.collapsed {
+  width: max-content;
+  margin-left: auto; /* keep the top-right anchor */
+}
+
+.panel.collapsed .handle,
+.panel.collapsed .buddies { display: none; }
+
+.panel.collapsed .pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.pill-alert {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--wait);
+  color: #1d1d22;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.pill-alert[hidden] { display: none; }

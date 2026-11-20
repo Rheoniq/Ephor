@@ -13,8 +13,13 @@
   const panel = document.getElementById('panel');
   const list = document.getElementById('buddies');
   const count = document.getElementById('count');
+  const collapseBtn = document.getElementById('collapse');
+  const pill = document.getElementById('pill');
+  const pillCount = document.getElementById('pill-count');
+  const pillAlert = document.getElementById('pill-alert');
   const expanded = new Set(); // sessionIds whose step list is open
   let sessions = [];
+  let collapsed = false; // set by main through onUiState
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -95,9 +100,23 @@
     const ids = new Set(sessions.map((s) => str(s.sessionId)));
     for (const id of expanded) if (!ids.has(id)) expanded.delete(id);
 
+    count.textContent = sessions.length ? String(sessions.length) : '';
+    panel.classList.toggle('collapsed', collapsed);
+
+    if (collapsed) {
+      // Pill only: the session count and a "!" when any session waits.
+      const waiting = sessions.filter((s) => s.status === 'waiting').length;
+      pillCount.textContent = String(sessions.length);
+      pillAlert.hidden = waiting === 0;
+      const label = `Expand panel, ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
+      pill.setAttribute('aria-label', waiting ? `${label}, ${waiting} waiting for you` : label);
+      list.replaceChildren();
+      reportHeight();
+      return;
+    }
+
     list.replaceChildren(...sessions.map(renderBuddy));
     if (sessions.length === 0) list.append(el('li', 'empty', 'No sessions'));
-    count.textContent = sessions.length ? String(sessions.length) : '';
 
     if (focusId !== null && focusRole) {
       for (const li of list.children) {
@@ -137,6 +156,28 @@
   window.addEventListener('pointercancel', release);
   window.addEventListener('blur', release);
   document.documentElement.addEventListener('pointerleave', release);
+
+  function setCollapsed(b) {
+    const wasFocused = document.activeElement === collapseBtn || document.activeElement === pill;
+    collapsed = b;
+    render();
+    // Keep keyboard focus on the control that now stands in for the old one.
+    if (wasFocused) (collapsed ? pill : collapseBtn).focus();
+  }
+
+  collapseBtn.addEventListener('click', () => {
+    setCollapsed(true);
+    window.huddle.setCollapsed(true);
+  });
+  pill.addEventListener('click', () => {
+    setCollapsed(false);
+    window.huddle.setCollapsed(false);
+  });
+
+  window.huddle.onUiState((state) => {
+    const next = !!(state && state.collapsed === true);
+    if (next !== collapsed) setCollapsed(next);
+  });
 
   window.huddle.onSnapshot((snapshot) => hold.push(snapshot));
 })();

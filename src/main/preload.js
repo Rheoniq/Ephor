@@ -15,4 +15,10 @@ contextBridge.exposeInMainWorld('huddle', {
   reportHeight(h) {
     ipcRenderer.send('huddle:content-size', h);
   },
+  setCollapsed(b) {
+    ipcRenderer.send('huddle:set-collapsed', b);
+  },
+  onUiState(cb) {
+    ipcRenderer.on('huddle:ui-state', (_event, state) => cb(state));
+  },
 });
