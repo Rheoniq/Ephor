@@ -76,6 +76,12 @@ body {
   list-style: none;
   margin: 0;
   padding: 4px;
+  /* The window is clamped at 800px (panel.js MAX_HEIGHT). 800 minus the panel
+     margins (12), border (2) and handle (about 30) leaves about 756; 750 keeps
+     a little slack, and the list scrolls beyond it. */
+  max-height: 750px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .empty {

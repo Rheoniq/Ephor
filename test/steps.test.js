@@ -55,6 +55,21 @@ test('long summaries are truncated to 80 chars with an ellipsis', () => {
   assert.ok(s.startsWith('Ran: echo aaa'));
 });
 
+test('a long path is cut from the left so the tool name and filename stay visible', () => {
+  const head = 'C:\\Users\\someone\\projects\\';
+  const tail = '\\src\\main\\x.js';
+  const p = head + 'd'.repeat(120 - head.length - tail.length) + tail;
+  assert.equal(p.length, 120);
+  const s = summarizeEvent(toolUse('Edit', { file_path: p }));
+  assert.ok(s.length <= 80, `length ${s.length}`);
+  assert.ok(s.startsWith('Edit …'), s);
+  assert.ok(s.endsWith('\\src\\main\\x.js'), s);
+});
+
+test('a short path is shown in full', () => {
+  assert.equal(summarizeEvent(toolUse('Read', { file_path: 'C:\\a\\b.js' })), 'Read C:\\a\\b.js');
+});
+
 test('multi-line commands are collapsed onto one line', () => {
   assert.equal(summarizeEvent(toolUse('Bash', { command: 'cd x &&\n  npm test' })), 'Ran: cd x && npm test');
 });

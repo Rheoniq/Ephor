@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const KNOWN_STATUSES = new Set(['busy', 'waiting', 'idle']);
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function pidIsAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -39,6 +40,8 @@ function readSessions(dir, isAlive) {
     }
     if (!data || typeof data !== 'object') continue;
     if (data.kind !== 'interactive' || data.entrypoint !== 'claude-desktop') continue;
+    // sessionId ends up in a transcript path and in IPC: accept only a UUID.
+    if (typeof data.sessionId !== 'string' || !SESSION_ID_RE.test(data.sessionId)) continue;
     if (!isAlive(data.pid)) continue;
 
     sessions.push({

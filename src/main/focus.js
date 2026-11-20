@@ -13,6 +13,14 @@ const { execFile } = require('node:child_process');
 const SESSION_ID_RE = /^local_[0-9a-f-]{36}$/;
 
 const FOCUS_SCRIPT = path.join(__dirname, 'focus-claude.ps1');
+// Absolute path, so a powershell.exe earlier on PATH or in the cwd is never used.
+const POWERSHELL_EXE = path.join(
+  process.env.SystemRoot || 'C:\\Windows',
+  'System32',
+  'WindowsPowerShell',
+  'v1.0',
+  'powershell.exe',
+);
 
 function deepLinkUrl(hostSessionId) {
   return `claude://code/continue?session=${hostSessionId}`;
@@ -33,7 +41,7 @@ function focusClaudeWindow() {
     // Size limit: the Windows command line caps at 32767 chars; this ~1.3 KB script encodes to ~3.5 KB.
     const encoded = Buffer.from(script, 'utf16le').toString('base64');
     execFile(
-      'powershell.exe',
+      POWERSHELL_EXE,
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
       { windowsHide: true, timeout: 5000 },
       (err) => resolve(!err),

@@ -8,12 +8,24 @@ const path = require('node:path');
 
 const { readSessions, pidIsAlive } = require('../src/main/sessions');
 
+const ID_SESS_1 = '11111111-1111-4111-8111-111111111111';
+const ID_OK = '22222222-2222-4222-8222-222222222222';
+const ID_BG = '33333333-3333-4333-8333-333333333333';
+const ID_CLI = '44444444-4444-4444-8444-444444444444';
+const ID_LIVE = '55555555-5555-4555-8555-555555555555';
+const ID_DEAD = '66666666-6666-4666-8666-666666666666';
+const ID_A = 'aaaaaaaa-0000-4000-8000-00000000000a';
+const ID_B = 'bbbbbbbb-0000-4000-8000-00000000000b';
+const ID_C = 'cccccccc-0000-4000-8000-00000000000c';
+const ID_KEY = 'dddddddd-0000-4000-8000-00000000000d';
+const ID_TXT = 'eeeeeeee-0000-4000-8000-00000000000e';
+
 let dir;
 
 function base(overrides = {}) {
   return {
     pid: 1001,
-    sessionId: 'sess-1',
+    sessionId: ID_SESS_1,
     cwd: 'C:\\work\\proj',
     kind: 'interactive',
     entrypoint: 'claude-desktop',
@@ -44,7 +56,7 @@ test('returns an interactive claude-desktop session with a live pid, all fields'
   const sessions = readSessions(dir, allAlive);
   assert.deepEqual(sessions, [
     {
-      sessionId: 'sess-1',
+      sessionId: ID_SESS_1,
       hostSessionId: 'local_abc',
       name: 'My session',
       status: 'busy',
@@ -56,18 +68,18 @@ test('returns an interactive claude-desktop session with a live pid, all fields'
 });
 
 test('excludes sessions whose kind is not interactive or entrypoint is not claude-desktop', () => {
-  writeJson('1001.json', base({ pid: 1001, sessionId: 'ok' }));
-  writeJson('1002.json', base({ pid: 1002, sessionId: 'bg', kind: 'background' }));
-  writeJson('1003.json', base({ pid: 1003, sessionId: 'cli', entrypoint: 'cli' }));
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_OK }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_BG, kind: 'background' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_CLI, entrypoint: 'cli' }));
   const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
-  assert.deepEqual(ids, ['ok']);
+  assert.deepEqual(ids, [ID_OK]);
 });
 
 test('excludes sessions whose pid is not alive', () => {
-  writeJson('1001.json', base({ pid: 1001, sessionId: 'live' }));
-  writeJson('1002.json', base({ pid: 1002, sessionId: 'dead' }));
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_LIVE }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_DEAD }));
   const ids = readSessions(dir, (pid) => pid === 1001).map((s) => s.sessionId);
-  assert.deepEqual(ids, ['live']);
+  assert.deepEqual(ids, [ID_LIVE]);
 });
 
 test('skips a file with invalid JSON without throwing', () => {
@@ -78,23 +90,23 @@ test('skips a file with invalid JSON without throwing', () => {
     sessions = readSessions(dir, allAlive);
   });
   assert.equal(sessions.length, 1);
-  assert.equal(sessions[0].sessionId, 'sess-1');
+  assert.equal(sessions[0].sessionId, ID_SESS_1);
 });
 
 test('maps an unknown status to idle and keeps known statuses', () => {
-  writeJson('1001.json', base({ pid: 1001, sessionId: 'a', status: 'weird' }));
-  writeJson('1002.json', base({ pid: 1002, sessionId: 'b', status: 'waiting' }));
-  writeJson('1003.json', base({ pid: 1003, sessionId: 'c', status: 'idle' }));
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, status: 'weird' }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_B, status: 'waiting' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_C, status: 'idle' }));
   const byId = Object.fromEntries(readSessions(dir, allAlive).map((s) => [s.sessionId, s.status]));
-  assert.deepEqual(byId, { a: 'idle', b: 'waiting', c: 'idle' });
+  assert.deepEqual(byId, { [ID_A]: 'idle', [ID_B]: 'waiting', [ID_C]: 'idle' });
 });
 
 test('ignores .key files and non-.json files', () => {
   writeJson('1001.json', base());
-  fs.writeFileSync(path.join(dir, '1001.abcdef.key'), JSON.stringify(base({ sessionId: 'key' })));
-  fs.writeFileSync(path.join(dir, 'notes.txt'), JSON.stringify(base({ sessionId: 'txt' })));
+  fs.writeFileSync(path.join(dir, '1001.abcdef.key'), JSON.stringify(base({ sessionId: ID_KEY })));
+  fs.writeFileSync(path.join(dir, 'notes.txt'), JSON.stringify(base({ sessionId: ID_TXT })));
   const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
-  assert.deepEqual(ids, ['sess-1']);
+  assert.deepEqual(ids, [ID_SESS_1]);
 });
 
 test('returns an empty array when the directory does not exist', () => {
@@ -104,4 +116,14 @@ test('returns an empty array when the directory does not exist', () => {
 test('pidIsAlive is true for the current process and false for an unused pid', () => {
   assert.equal(pidIsAlive(process.pid), true);
   assert.equal(pidIsAlive(2147483646), false);
+});
+
+test('drops entries whose sessionId is not a UUID', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_OK }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: 'sess-1' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: '..\..\evil' }));
+  writeJson('1004.json', base({ pid: 1004, sessionId: 12345 }));
+  writeJson('1005.json', base({ pid: 1005, sessionId: undefined }));
+  const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
+  assert.deepEqual(ids, [ID_OK]);
 });

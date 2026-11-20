@@ -1,7 +1,10 @@
 'use strict';
 
 // Tracks user dismissals. A dismissed session reappears when its status
-// becomes 'busy' or 'waiting' and differs from the status at dismiss time.
+// becomes 'busy' or 'waiting' and differs from the last status recorded for
+// it: the status at dismiss time, or 'idle' once it has been seen idle while
+// hidden. So a session dismissed while busy comes back when it goes idle and
+// then busy again.
 function createDismissals() {
   const dismissed = new Map(); // sessionId -> status at dismiss
 

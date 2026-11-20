@@ -14,7 +14,7 @@ const { createDismissals } = require('./dismissals');
 const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
 const { createGrace } = require('./grace');
-const { clampHeight, createSnapshotGate } = require('./panel');
+const { clampHeight, createSnapshotGate, toSnapshotSession } = require('./panel');
 const { demoSessions } = require('./demo');
 const { loginItemTarget } = require('./login');
 
@@ -66,7 +66,10 @@ function safeSteps(s) {
 function buildDemoSnapshot() {
   const kept = demoSessions();
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
-  return { sessions: kept.filter((s) => dismissals.visible(s.sessionId, s.status)) };
+  const sessions = kept
+    .filter((s) => dismissals.visible(s.sessionId, s.status))
+    .map((s) => toSnapshotSession(s, s.steps));
+  return { sessions };
 }
 
 function buildSnapshot() {
@@ -79,7 +82,7 @@ function buildSnapshot() {
   for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
   const sessions = kept
     .filter((s) => dismissals.visible(s.sessionId, s.status))
-    .map((s) => ({ ...s, steps: safeSteps(s) }));
+    .map((s) => toSnapshotSession(s, safeSteps(s)));
   return { sessions };
 }
 
@@ -115,8 +118,10 @@ function refreshUnsafe() {
   updateVisibility(count);
 }
 
+// Trailing throttle: the first event starts the timer and later events in
+// the window ride along, so a steady stream of events cannot starve refresh.
 function scheduleRefresh() {
-  if (debounceTimer) clearTimeout(debounceTimer);
+  if (debounceTimer) return;
   debounceTimer = setTimeout(refresh, DEBOUNCE_MS);
 }
 
@@ -209,9 +214,14 @@ function startsAtLogin() {
 }
 
 function setStartAtLogin(enabled) {
-  const target = loginTarget();
-  app.setLoginItemSettings({ openAtLogin: enabled, path: target.path, args: target.args });
-  console.log(`[huddle] start at login: ${enabled ? 'on' : 'off'}`);
+  try {
+    const target = loginTarget();
+    app.setLoginItemSettings({ openAtLogin: enabled, path: target.path, args: target.args });
+    console.log(`[huddle] start at login: ${enabled ? 'on' : 'off'}`);
+  } catch (err) {
+    // The menu is rebuilt from the real state afterwards either way.
+    console.error(`[huddle] setting start at login failed: ${err && err.message ? err.message : err}`);
+  }
 }
 
 function trayMenu() {

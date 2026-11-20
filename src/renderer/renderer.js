@@ -120,8 +120,23 @@
 
   new ResizeObserver(reportHeight).observe(panel);
 
-  window.huddle.onSnapshot((snapshot) => {
+  const hold = window.HuddleHold.createSnapshotHold((snapshot) => {
     sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
     render();
   });
+
+  // While a pointer is down on the list, snapshots wait so the pressed button
+  // stays the same element until the click lands.
+  function release() {
+    hold.up();
+    // Deferred so the click that follows pointerup fires on the old button first.
+    setTimeout(hold.flush, 0);
+  }
+  list.addEventListener('pointerdown', () => hold.down());
+  window.addEventListener('pointerup', release);
+  window.addEventListener('pointercancel', release);
+  window.addEventListener('blur', release);
+  document.documentElement.addEventListener('pointerleave', release);
+
+  window.huddle.onSnapshot((snapshot) => hold.push(snapshot));
 })();

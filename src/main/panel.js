@@ -28,4 +28,17 @@ function createSnapshotGate() {
   return { shouldSend, mark };
 }
 
-module.exports = { clampHeight, createSnapshotGate, MIN_HEIGHT, MAX_HEIGHT };
+// The renderer gets only what it shows or sends back. Internal fields such as
+// cwd, pid and updatedAt stay in the main process, and leaving them out also
+// keeps them out of the snapshot gate's comparison.
+function toSnapshotSession(s, steps) {
+  return {
+    sessionId: s.sessionId,
+    hostSessionId: s.hostSessionId,
+    name: s.name,
+    status: s.status,
+    steps,
+  };
+}
+
+module.exports = { clampHeight, createSnapshotGate, toSnapshotSession, MIN_HEIGHT, MAX_HEIGHT };

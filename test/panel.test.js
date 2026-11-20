@@ -2,7 +2,33 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { clampHeight, createSnapshotGate } = require('../src/main/panel');
+const { clampHeight, createSnapshotGate, toSnapshotSession } = require('../src/main/panel');
+
+test('toSnapshotSession keeps only the fields the renderer uses', () => {
+  const s = {
+    sessionId: 'a',
+    hostSessionId: 'local_a',
+    name: 'N',
+    status: 'busy',
+    cwd: 'C:\\secret',
+    pid: 42,
+    updatedAt: 1,
+  };
+  assert.deepEqual(toSnapshotSession(s, ['x']), {
+    sessionId: 'a',
+    hostSessionId: 'local_a',
+    name: 'N',
+    status: 'busy',
+    steps: ['x'],
+  });
+});
+
+test('snapshot gate ignores changes in fields that are not sent', () => {
+  const g = createSnapshotGate();
+  const base = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy' };
+  assert.equal(g.shouldSend({ sessions: [toSnapshotSession({ ...base, updatedAt: 1, pid: 1 }, [])] }), true);
+  assert.equal(g.shouldSend({ sessions: [toSnapshotSession({ ...base, updatedAt: 2, pid: 2 }, [])] }), false);
+});
 
 test('clampHeight rounds and clamps to 40..800', () => {
   assert.equal(clampHeight(120.4), 120);

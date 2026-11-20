@@ -34,3 +34,11 @@ test('a reappearing session resets its miss count and takes the new data', () =>
   assert.deepEqual(ids(g.apply([])), ['a']);
   assert.deepEqual(ids(g.apply([])), []);
 });
+
+test('a session entering and leaving grace keeps its relative order', () => {
+  const g = createGrace(2);
+  assert.deepEqual(ids(g.apply([s('a'), s('b'), s('c')])), ['a', 'b', 'c']);
+  assert.deepEqual(ids(g.apply([s('a'), s('c')])), ['a', 'b', 'c']);
+  assert.deepEqual(ids(g.apply([s('c'), s('b'), s('a')])), ['a', 'b', 'c']);
+  assert.deepEqual(ids(g.apply([s('d'), s('a'), s('b'), s('c')])), ['a', 'b', 'c', 'd']);
+});

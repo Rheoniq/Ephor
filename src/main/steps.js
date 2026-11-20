@@ -17,6 +17,16 @@ function truncate(s) {
   return s.length > MAX_LEN ? s.slice(0, MAX_LEN - 1) + ELLIPSIS : s;
 }
 
+// For "<tool> <path>": keeps the tool name and the end of the path (the
+// filename) and cuts the path from the left, so the result is at most MAX_LEN.
+function truncatePath(name, p) {
+  const full = `${name} ${p}`;
+  if (full.length <= MAX_LEN) return full;
+  const room = MAX_LEN - name.length - 1 - ELLIPSIS.length;
+  if (room <= 0) return truncate(name);
+  return `${name} ${ELLIPSIS}${p.slice(p.length - room)}`;
+}
+
 function oneLine(s) {
   return String(s).replace(/\s+/g, ' ').trim();
 }
@@ -32,7 +42,7 @@ function summarizeToolUse(block) {
   }
   if (PATH_TOOLS.has(name)) {
     const p = input.file_path || input.notebook_path;
-    if (typeof p === 'string' && p) return truncate(`${name} ${oneLine(p)}`);
+    if (typeof p === 'string' && p) return truncatePath(name, oneLine(p));
   }
   return truncate(name);
 }
@@ -47,6 +57,8 @@ function summarizeEvent(line) {
   if (!event || event.type !== 'assistant') return null;
   const content = event.message && event.message.content;
   if (!Array.isArray(content)) return null;
+  // Only the first tool_use block of an event is summarised; any later
+  // tool_use blocks in the same event (parallel calls) are not shown.
   const block = content.find((b) => b && b.type === 'tool_use');
   return block ? summarizeToolUse(block) : null;
 }
