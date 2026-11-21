@@ -1,7 +1,7 @@
 {
   "name": "huddle",
   "productName": "Huddle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standalone panel showing Claude Desktop sessions",
   "main": "src/main/main.js",
   "private": true,
