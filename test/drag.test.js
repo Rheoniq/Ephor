@@ -208,3 +208,87 @@ test('window drag ignores an invalid offset', () => {
   d.to(null);
   assert.equal(w.sets.length, 0);
 });
+
+const { createPanelAnchor, placeNear } = require('../src/renderer/drag');
+
+const SHORT_WA = { x: 0, y: 0, width: 1440, height: 762 };
+
+test('anchor: a transient tall height then the settled one ends at the minimum shift', () => {
+  const a = createPanelAnchor();
+  a.set(738, 1); // the pill's top at expand time, parked at the bottom
+  const tall = a.place({ x: 1080, y: 738, width: 360, height: 795 }, SHORT_WA, 1);
+  assert.deepEqual(tall, { x: 1080, y: 0, width: 360, height: 795 });
+  // The settled height is a shrink, but it still places from the anchor.
+  const settled = a.place({ x: 1080, y: 0, width: 360, height: 463 }, SHORT_WA, 1);
+  assert.deepEqual(settled, { x: 1080, y: 299, width: 360, height: 463 });
+});
+
+test('anchor: a panel that fits stays at the anchor', () => {
+  const a = createPanelAnchor();
+  a.set(100, 1);
+  assert.deepEqual(a.place({ x: 500, y: 100, width: 360, height: 463 }, SHORT_WA, 1), {
+    x: 500,
+    y: 100,
+    width: 360,
+    height: 463,
+  });
+});
+
+test('anchor: with no anchor yet, the current top becomes the anchor', () => {
+  const a = createPanelAnchor();
+  assert.equal(a.place({ x: 0, y: 700, width: 360, height: 795 }, SHORT_WA, 1).y, 0);
+  assert.equal(a.place({ x: 0, y: 0, width: 360, height: 463 }, SHORT_WA, 1).y, 299);
+});
+
+test('anchor: a user move (header drag) re-anchors at the new top', () => {
+  const a = createPanelAnchor();
+  a.set(738, 1);
+  a.place({ x: 1080, y: 738, width: 360, height: 463 }, SHORT_WA, 1); // placed at 299
+  a.moved(299, 1); // our own placement: no change
+  assert.equal(a.place({ x: 1080, y: 299, width: 360, height: 300 }, SHORT_WA, 1).y, 462);
+  a.moved(50, 1); // the user dragged the header
+  assert.equal(a.place({ x: 1080, y: 50, width: 360, height: 463 }, SHORT_WA, 1).y, 50);
+});
+
+test('anchor: a move with no anchor, or clear, leaves no anchor', () => {
+  const a = createPanelAnchor();
+  a.moved(400, 1);
+  assert.equal(a.anchorY(), null);
+  a.set(10, 1);
+  a.clear();
+  assert.equal(a.anchorY(), null);
+});
+
+test('anchor: a different display re-anchors at the current top', () => {
+  const a = createPanelAnchor();
+  a.set(738, 1);
+  const other = { x: -1098, y: -86, width: 1098, height: 570 };
+  assert.equal(a.place({ x: -400, y: 10, width: 360, height: 463 }, other, 2).y, 10);
+  assert.equal(a.anchorY(), 10);
+});
+
+test('placeNear puts the toast below the panel, right edges aligned', () => {
+  const panel = { x: 1068, y: 12, width: 360, height: 463 };
+  assert.deepEqual(placeNear(panel, { width: 340, height: 64 }, SHORT_WA, 8), {
+    x: 1088,
+    y: 483,
+    width: 340,
+    height: 64,
+  });
+});
+
+test('placeNear puts the toast above a panel flush with the work-area bottom', () => {
+  const panel = { x: 1080, y: 299, width: 360, height: 463 };
+  assert.deepEqual(placeNear(panel, { width: 340, height: 64 }, SHORT_WA, 8), {
+    x: 1100,
+    y: 227,
+    width: 340,
+    height: 64,
+  });
+});
+
+test('placeNear keeps the toast inside the work area when neither side fits', () => {
+  const panel = { x: -50, y: 0, width: 96, height: 762 };
+  const t = placeNear(panel, { width: 340, height: 64 }, SHORT_WA, 8);
+  assert.deepEqual(t, { x: 0, y: 0, width: 340, height: 64 });
+});

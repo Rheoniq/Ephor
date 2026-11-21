@@ -46,7 +46,7 @@ const {
 } = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
 const { createControls, hideTitle } = require('./controls');
-const { createWindowDrag, fitInside } = require('../renderer/drag');
+const { createWindowDrag, createPanelAnchor, placeNear } = require('../renderer/drag');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -99,6 +99,8 @@ const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
 const lastSteps = new Map(); // sessionId -> last good steps
 let win = null;
+// The expanded panel's top (see panelTarget).
+const panelAnchor = createPanelAnchor();
 let lastSnapshot = { sessions: [] };
 let lastStatus = new Map(); // sessionId -> status, from the last registry read
 let lastCount = -1;
@@ -348,20 +350,17 @@ function notifyEvents(kept) {
   for (const event of detector.detect(kept)) pushToast(event, statusById.get(event.sessionId));
 }
 
-// Below the panel, on the display the panel is on (the pill may have been
-// dragged to another monitor); the primary display when the panel is hidden.
+// Next to the panel on the display the panel is on (the pill may have been
+// dragged to another monitor): below it, or above it when below does not fit
+// the work area. Top-right of the primary display when the panel is hidden.
 function toastBounds() {
-  const panelShown = win && !win.isDestroyed() && win.isVisible();
-  const display = panelShown ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
-  const { workArea } = display;
-  let right = workArea.x + workArea.width - MARGIN;
-  let top = workArea.y + MARGIN;
-  if (panelShown) {
+  const size = { width: TOAST_WIDTH, height: TOAST_HEIGHT };
+  if (win && !win.isDestroyed() && win.isVisible()) {
     const b = win.getBounds();
-    right = b.x + b.width;
-    top = b.y + b.height + TOAST_GAP;
+    return placeNear(b, size, screen.getDisplayMatching(b).workArea, TOAST_GAP);
   }
-  return { x: right - TOAST_WIDTH, y: top, width: TOAST_WIDTH, height: TOAST_HEIGHT };
+  const { workArea } = screen.getPrimaryDisplay();
+  return { x: workArea.x + workArea.width - MARGIN - TOAST_WIDTH, y: workArea.y + MARGIN, ...size };
 }
 
 function closeToast() {
@@ -478,22 +477,34 @@ function windowWidth() {
   return visibility.isCollapsed() ? PILL_WIDTH : WIN_WIDTH;
 }
 
-// The rect moved so all of it lies inside the work area of its display.
-function fitOnDisplay(rect) {
-  const { x, y } = fitInside(rect, screen.getDisplayMatching(rect).workArea);
-  return { ...rect, x, y };
+// The window bounds for `width` and `height`, keeping the right edge. The
+// collapsed pill keeps its top and may stick out (see drag.js). The expanded
+// panel takes its top from panelAnchor and lies wholly inside the work area
+// of its display; every size report places it from the anchor again, so a
+// transient tall height after expand does not leave it pinned at the top.
+function panelTarget(b, width, height) {
+  const rect = { x: b.x + b.width - width, y: b.y, width, height };
+  if (visibility.isCollapsed()) return rect;
+  const display = screen.getDisplayMatching(b);
+  return panelAnchor.place(rect, display.workArea, display.id);
 }
 
-// Resizes to the width for the current state, keeping the right edge and top.
-// Growing (expanding from the pill) also fits the panel inside its display's
-// work area, so a pill parked near an edge does not open off screen.
+function setPanelBounds(target) {
+  const b = win.getBounds();
+  if (b.x === target.x && b.y === target.y && b.width === target.width && b.height === target.height) return;
+  win.setBounds(target);
+}
+
+// Resizes to the width for the current state, keeping the right edge. On
+// expand the pill's top becomes the anchor; on collapse the anchor goes.
 function applyWindowWidth() {
   if (!win || win.isDestroyed()) return;
   const b = win.getBounds();
   const width = windowWidth();
   if (b.width === width) return;
-  const target = { x: b.x + b.width - width, y: b.y, width, height: b.height };
-  win.setBounds(width > b.width ? fitOnDisplay(target) : target);
+  if (visibility.isCollapsed()) panelAnchor.clear();
+  else panelAnchor.set(b.y, screen.getDisplayMatching(b).id);
+  setPanelBounds(panelTarget(b, width, b.height));
 }
 
 function setCollapsed(collapsed) {
@@ -610,6 +621,13 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
+  // A header drag of the expanded panel: its new top becomes the anchor.
+  // Our own placements are recognised and change nothing.
+  win.on('moved', () => {
+    if (win.isDestroyed() || visibility.isCollapsed()) return;
+    const b = win.getBounds();
+    panelAnchor.moved(b.y, screen.getDisplayMatching(b).id);
+  });
   win.webContents.on('did-finish-load', () => {
     // A (re)loaded page has nothing yet: always send the current state.
     sendUiState();
@@ -780,12 +798,8 @@ ipcMain.on('huddle:content-size', (event, height) => {
   const b = win.getBounds();
   const width = windowWidth();
   if (b.height === h && b.width === width) return;
-  // Keep the right edge and top so the panel stays anchored top-right. An
-  // expanded panel that grows is fitted inside its display's work area; the
-  // pill is left where it was dragged (it may stick out, see drag.js).
-  const target = { x: b.x + b.width - width, y: b.y, width, height: h };
-  const grows = h > b.height || width > b.width;
-  win.setBounds(grows && !visibility.isCollapsed() ? fitOnDisplay(target) : target);
+  // Width, position and height in one setBounds (see panelTarget).
+  setPanelBounds(panelTarget(b, width, h));
 });
 
 ipcMain.on('huddle:dismiss', (event, sessionId) => {
@@ -884,6 +898,11 @@ if (!app.requestSingleInstanceLock()) {
     registerHotkey();
     if (DEMO) loadDemoPrompts();
     createWindow();
+    // A display added, removed or rescaled: the next placement re-anchors at
+    // the panel's current top.
+    for (const name of ['display-added', 'display-removed', 'display-metrics-changed']) {
+      screen.on(name, () => panelAnchor.clear());
+    }
     createTray();
     // Start polling before the first refresh so a failing first read
     // cannot leave the app without updates.

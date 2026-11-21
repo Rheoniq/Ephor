@@ -115,12 +115,61 @@
     return { start, to, end, isDragging: () => origin !== null };
   }
 
+  // Main side, for the expanded panel: the top it should have (the anchor) and
+  // where it goes for each reported size. Every placement starts from the
+  // anchor, growing or shrinking, so a transient tall height right after
+  // expand cannot leave the panel pinned higher than the settled height needs.
+  // set(y, displayId) on expand; clear() on collapse; moved(y, displayId)
+  // after the window moved, which re-anchors unless it is our own placement;
+  // place(rect, workArea, displayId) re-anchors at rect.y when there is no
+  // anchor or the display changed.
+  function createPanelAnchor() {
+    let anchor = null; // { y, displayId }
+    let placedY = null; // the y of our last placement
+
+    function set(y, displayId) {
+      anchor = { y, displayId };
+      placedY = null;
+    }
+
+    function clear() {
+      anchor = null;
+      placedY = null;
+    }
+
+    function moved(y, displayId) {
+      if (!anchor || y === placedY) return;
+      set(y, displayId);
+    }
+
+    function place(rect, workArea, displayId) {
+      if (!anchor || anchor.displayId !== displayId) set(rect.y, displayId);
+      const { x, y } = fitInside({ ...rect, y: anchor.y }, workArea);
+      placedY = y;
+      return { x, y, width: rect.width, height: rect.height };
+    }
+
+    return { set, clear, moved, place, anchorY: () => (anchor ? anchor.y : null) };
+  }
+
+  // A small window (the toast) next to `near` (the panel): right edges
+  // aligned, `gap` px below it, or above it when below does not fit the work
+  // area; always kept inside the work area.
+  function placeNear(near, size, workArea, gap) {
+    let y = near.y + near.height + gap;
+    if (y + size.height > workArea.y + workArea.height) y = near.y - gap - size.height;
+    const rect = { x: near.x + near.width - size.width, y, width: size.width, height: size.height };
+    return { ...rect, ...fitInside(rect, workArea) };
+  }
+
   const api = {
     createDragTracker,
     parseDragDelta,
     clampToWorkArea,
     fitInside,
     createWindowDrag,
+    createPanelAnchor,
+    placeNear,
     DEFAULT_THRESHOLD,
     MAX_DELTA,
     MIN_VISIBLE,
