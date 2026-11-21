@@ -36,4 +36,15 @@ contextBridge.exposeInMainWorld('huddle', {
   quit() {
     ipcRenderer.send('huddle:quit');
   },
+  // Dragging the collapsed pill: the pointer's total screen offset since the
+  // drag began. Main checks the sender and the numbers.
+  dragStart() {
+    ipcRenderer.send('huddle:drag-start');
+  },
+  dragTo(dx, dy) {
+    ipcRenderer.send('huddle:drag-to', { dx, dy });
+  },
+  dragEnd() {
+    ipcRenderer.send('huddle:drag-end');
+  },
 });

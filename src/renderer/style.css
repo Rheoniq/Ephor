@@ -401,6 +401,10 @@ button:focus-visible {
   background: transparent;
   border: 0;
   cursor: pointer;
+  /* The pill drags the window (renderer.js); no text selection, and touch
+     moves go to the pointer events instead of panning. */
+  user-select: none;
+  touch-action: none;
 }
 
 .panel.collapsed .pill:hover { background: var(--row-hover); }

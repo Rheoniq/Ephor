@@ -46,6 +46,7 @@ const {
 } = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
 const { createControls, hideTitle } = require('./controls');
+const { createWindowDrag } = require('./drag');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -483,6 +484,8 @@ function applyWindowWidth() {
 }
 
 function setCollapsed(collapsed) {
+  // A drag of the pill ends when the panel opens (a prompt, the tray).
+  if (!collapsed) pillDrag.end();
   visibility.setCollapsed(collapsed);
   settings.collapsed = visibility.isCollapsed();
   persistSettings();
@@ -717,6 +720,20 @@ function fromOurWindow(event) {
   return !!win && !win.isDestroyed() && event.sender === win.webContents;
 }
 
+// Dragging the collapsed pill: the renderer sends the pointer's total screen
+// offset; the window goes to its position at drag start plus that offset,
+// keeping its current size, with at least 24 px left on a display's work area.
+// Every resize elsewhere reads win.getBounds(), so a dragged position stays.
+const pillDrag = createWindowDrag({
+  getBounds: () => win.getBounds(),
+  setBounds: (b) => win.setBounds(b),
+  workAreaFor: (rect) => screen.getDisplayMatching(rect).workArea,
+});
+
+function panelReady() {
+  return !!win && !win.isDestroyed();
+}
+
 const controls = createControls({
   isPanelSender: fromOurWindow,
   isToastSender: (event) => !!toastWin && !toastWin.isDestroyed() && event.sender === toastWin.webContents,
@@ -725,10 +742,21 @@ const controls = createControls({
   quit: () => app.quit(),
   closeToast: dismissToast,
   setToastClickable,
+  // Only the collapsed pill drags; the expanded header uses the app region.
+  dragStart: () => {
+    if (panelReady() && visibility.isCollapsed()) pillDrag.start();
+  },
+  dragTo: (delta) => {
+    if (panelReady() && visibility.isCollapsed()) pillDrag.to(delta);
+  },
+  dragEnd: () => pillDrag.end(),
 });
 
 ipcMain.on('huddle:hide', (event) => controls.onHide(event));
 ipcMain.on('huddle:quit', (event) => controls.onQuit(event));
+ipcMain.on('huddle:drag-start', (event) => controls.onDragStart(event));
+ipcMain.on('huddle:drag-to', (event, payload) => controls.onDragTo(event, payload));
+ipcMain.on('huddle:drag-end', (event) => controls.onDragEnd(event));
 ipcMain.on('huddle-toast:close', (event) => controls.onToastClose(event));
 ipcMain.on('huddle-toast:clickable', (event, clickable) => controls.onToastClickable(event, clickable));
 

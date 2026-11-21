@@ -1,7 +1,9 @@
 'use strict';
 
+const { parseDragDelta } = require('./drag');
+
 // Close controls: the panel's Hide and Quit buttons and the toast's close
-// cross. Each IPC message counts only from its own window; anything else,
+// cross; and the collapsed pill's drag messages. Each IPC message counts only from its own window; anything else,
 // and any value that is not the expected type, is ignored. An action that
 // throws (for example on a window destroyed meanwhile) is logged, not thrown.
 
@@ -12,6 +14,9 @@ function createControls({
   quit,
   closeToast,
   setToastClickable,
+  dragStart = () => {},
+  dragTo = () => {},
+  dragEnd = () => {},
   log = (msg) => console.error(msg),
 }) {
   function safe(what, fn) {
@@ -38,6 +43,17 @@ function createControls({
     onToastClickable(event, clickable) {
       if (!fromToast(event) || typeof clickable !== 'boolean') return;
       safe('toast click state', () => setToastClickable(clickable));
+    },
+    onDragStart(event) {
+      if (fromPanel(event)) safe('drag start', dragStart);
+    },
+    onDragTo(event, payload) {
+      if (!fromPanel(event)) return;
+      const delta = parseDragDelta(payload);
+      if (delta) safe('drag', () => dragTo(delta));
+    },
+    onDragEnd(event) {
+      if (fromPanel(event)) safe('drag end', dragEnd);
     },
   };
 }

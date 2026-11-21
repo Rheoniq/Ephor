@@ -286,7 +286,82 @@
   window.addEventListener('blur', release);
   document.documentElement.addEventListener('pointerleave', release);
 
+  // Dragging the collapsed pill. The pill is a button, so an app-region drag
+  // area would swallow its click; instead the pointer's offset in screen
+  // coordinates goes to main (at most once per animation frame), and main
+  // moves the window. A press that moved less than the threshold is a click.
+  const dragTracker = window.HuddleDrag.createDragTracker({ threshold: window.HuddleDrag.DEFAULT_THRESHOLD });
+  let dragPointer = null; // pointerId of the press on the pill, or null
+  let dragSent = false; // drag-start went to main for this press
+  let dragFrame = 0;
+  let dragPending = null; // latest { dx, dy } not sent yet
+  let skipClick = false; // the press that just ended was a drag
+
+  function sendDragFrame() {
+    dragFrame = 0;
+    if (!dragPending) return;
+    window.huddle.dragTo(dragPending.dx, dragPending.dy);
+    dragPending = null;
+  }
+
+  // Ends the current press on the pill; true when it was a drag.
+  function endPillDrag() {
+    if (dragPointer === null) return false;
+    const id = dragPointer;
+    dragPointer = null;
+    try {
+      if (pill.hasPointerCapture(id)) pill.releasePointerCapture(id);
+    } catch {
+      // The pointer is already gone.
+    }
+    if (dragFrame) {
+      cancelAnimationFrame(dragFrame);
+      sendDragFrame(); // the last position still goes out
+    }
+    dragPending = null;
+    const { wasDrag } = dragTracker.end();
+    if (dragSent) window.huddle.dragEnd();
+    dragSent = false;
+    return wasDrag;
+  }
+
+  pill.addEventListener('pointerdown', (e) => {
+    skipClick = false;
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    endPillDrag();
+    dragPointer = e.pointerId;
+    dragTracker.start(e.screenX, e.screenY);
+    try {
+      // A fast drag keeps the pointer even when it leaves the pill.
+      pill.setPointerCapture(e.pointerId);
+    } catch {
+      // Capture failed; the drag still works while over the pill.
+    }
+  });
+  pill.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== dragPointer) return;
+    const m = dragTracker.move(e.screenX, e.screenY);
+    if (!m.dragging) return;
+    if (!dragSent) {
+      dragSent = true;
+      window.huddle.dragStart();
+    }
+    dragPending = { dx: m.dx, dy: m.dy };
+    if (!dragFrame) dragFrame = requestAnimationFrame(sendDragFrame);
+  });
+  pill.addEventListener('pointerup', (e) => {
+    if (e.pointerId !== dragPointer) return;
+    if (endPillDrag()) skipClick = true;
+  });
+  pill.addEventListener('pointercancel', (e) => {
+    if (e.pointerId === dragPointer) endPillDrag();
+  });
+  pill.addEventListener('lostpointercapture', (e) => {
+    if (e.pointerId === dragPointer) endPillDrag();
+  });
+
   function setCollapsed(b) {
+    if (!b) endPillDrag();
     const wasFocused = document.activeElement === collapseBtn || document.activeElement === pill;
     collapsed = b;
     render();
@@ -298,7 +373,12 @@
     setCollapsed(true);
     window.huddle.setCollapsed(true);
   });
-  pill.addEventListener('click', () => {
+  pill.addEventListener('click', (e) => {
+    // A press that dragged the pill does not also expand it. Enter and Space
+    // give a click with detail 0 and always expand.
+    const afterDrag = skipClick && e.detail !== 0;
+    skipClick = false;
+    if (afterDrag) return;
     setCollapsed(false);
     window.huddle.setCollapsed(false);
   });

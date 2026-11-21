@@ -91,6 +91,46 @@ test('a throwing action is caught and logged, not thrown', () => {
   assert.equal(errors.length, 3);
 });
 
+function dragSetup() {
+  const calls = [];
+  const c = createControls({
+    isPanelSender: (event) => event.sender === PANEL,
+    isToastSender: (event) => event.sender === TOAST,
+    hide: () => {},
+    quit: () => {},
+    closeToast: () => {},
+    setToastClickable: () => {},
+    dragStart: () => calls.push('start'),
+    dragTo: (d) => calls.push(`to:${d.dx},${d.dy}`),
+    dragEnd: () => calls.push('end'),
+  });
+  return { c, calls };
+}
+
+test('drag messages run only for the panel window', () => {
+  const { c, calls } = dragSetup();
+  for (const sender of [OTHER, TOAST]) {
+    c.onDragStart(from(sender));
+    c.onDragTo(from(sender), { dx: 1, dy: 2 });
+    c.onDragEnd(from(sender));
+  }
+  c.onDragStart(undefined);
+  c.onDragTo(null, { dx: 1, dy: 2 });
+  assert.deepEqual(calls, []);
+  c.onDragStart(from(PANEL));
+  c.onDragTo(from(PANEL), { dx: 1, dy: -2 });
+  c.onDragEnd(from(PANEL));
+  assert.deepEqual(calls, ['start', 'to:1,-2', 'end']);
+});
+
+test('drag-to ignores anything but finite numbers within +-20000', () => {
+  const { c, calls } = dragSetup();
+  for (const v of [null, 1, 'x', [], {}, { dx: NaN, dy: 0 }, { dx: 0, dy: Infinity }, { dx: 20001, dy: 0 }]) {
+    c.onDragTo(from(PANEL), v);
+  }
+  assert.deepEqual(calls, []);
+});
+
 test('hideTitle names the hotkey, or the tray when there is none', () => {
   assert.equal(hideTitle('Ctrl+Alt+H'), 'Hide panel (Ctrl+Alt+H shows it again)');
   assert.equal(hideTitle(null), 'Hide panel (the tray icon shows it again)');
