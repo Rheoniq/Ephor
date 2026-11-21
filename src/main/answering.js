@@ -133,8 +133,10 @@ function samePath(a, b) {
 
 // The visible buddy a hook belongs to, or null. A session id the registry
 // knows decides on its own, so a hidden session never borrows another
-// buddy. Otherwise the transcript path, then the cwd, must match exactly one
-// kept session, and that session must be visible.
+// buddy. Otherwise the hook's transcript path must equal the transcript path
+// of exactly one kept session, and that session must be visible. There is
+// no cwd fallback: hooks fire for every Claude Code session on the machine
+// (CLI, IDE, SDK), and one in the same folder is not the Desktop buddy.
 function matchBuddy(parsed, ctx) {
   if (!isObject(parsed) || !isObject(ctx)) return null;
   const kept = Array.isArray(ctx.kept) ? ctx.kept : [];
@@ -147,11 +149,7 @@ function matchBuddy(parsed, ctx) {
   const byTranscript = kept.filter(
     (s) => typeof s.cwd === 'string' && samePath(transcriptPath(ctx.home, s.cwd, s.sessionId), parsed.transcriptPath),
   );
-  if (byTranscript.length === 1) return pick(byTranscript[0]);
-  if (byTranscript.length > 1) return null;
-
-  const byCwd = kept.filter((s) => samePath(s.cwd, parsed.cwd));
-  return byCwd.length === 1 ? pick(byCwd[0]) : null;
+  return byTranscript.length === 1 ? pick(byTranscript[0]) : null;
 }
 
 // Whether a held prompt must end, checked on every registry read. The

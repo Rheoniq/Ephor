@@ -124,7 +124,7 @@ function createHookServer(options) {
   function hold(res, parsed, eventName) {
     if (stopped || !canHold()) return fallThrough(res);
     // The prompt belongs to the buddy findBuddy names, which can differ from
-    // the hook's own session_id when it matched by transcript or cwd.
+    // the hook's own session_id when it matched by transcript path.
     const sessionId = findBuddy(parsed);
     if (typeof sessionId !== 'string' || sessionId === '' || bySession.has(sessionId)) {
       return fallThrough(res);

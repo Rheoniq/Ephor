@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { EventEmitter, once } = require('node:events');
 const { createHookServer } = require('../src/main/hooks');
+const { promptView, matchBuddy } = require('../src/main/answering');
 
 const TOKEN = 'a1'.repeat(32);
 const SESSION = 'cd47e535-4ad5-4353-b403-4cd8a2f1f0c7';
@@ -232,6 +233,26 @@ test('a session without a buddy gets 204', async (t) => {
   const { port, prompts } = await startServer(t);
   assert.equal((await send(port, { body: permissionBody('another-session') })).status, 204);
   assert.equal(prompts.length, 0);
+});
+
+test('a hook from a session not in the registry gets 204 even when a buddy shares its cwd', async (t) => {
+  // The real matching rules, as main wires them.
+  const buddy = { sessionId: 'aaaaaaaa-0000-0000-0000-000000000001', cwd: 'C:\\Users\\x\\TEST' };
+  const ctx = { kept: [buddy], visible: [buddy], home: 'C:\\Users\\x' };
+  const { hooks, port, events, prompts } = await startServer(t, {
+    findBuddy: (parsed) => (promptView(parsed) ? matchBuddy(parsed, ctx) : null),
+  });
+  // Same cwd as the buddy, its own session id and transcript: a CLI session.
+  assert.equal((await send(port, { body: permissionBody('cli-session') })).status, 204);
+  assert.equal((await send(port, { body: askBody('cli-session') })).status, 204);
+  assert.equal(prompts.length, 0);
+  // The buddy's own session is held.
+  const promptSeen = once(events, 'prompt');
+  const pending = send(port, { body: permissionBody(buddy.sessionId) });
+  const [prompt] = await promptSeen;
+  assert.equal(prompt.sessionId, buddy.sessionId);
+  assert.equal(hooks.resolve(prompt.id, null), true);
+  assert.equal((await pending).status, 204);
 });
 
 test('a held permission prompt receives the resolved JSON', async (t) => {

@@ -258,20 +258,25 @@ test('matchBuddy: unknown id falls back to the transcript path, case-insensitive
   assert.equal(matchBuddy(hook('other', { transcriptPath: tp }), ctx), B.sessionId);
 });
 
-test('matchBuddy: unknown id falls back to a cwd only one session has', () => {
+test('matchBuddy: an unknown id never matches by cwd, even when only one buddy has it', () => {
+  // Hooks fire for every Claude Code session on the machine (CLI, IDE, SDK);
+  // one in the same folder as a Desktop buddy is not that buddy.
   const ctx = { kept: [A, B], visible: [A, B], home: HOME };
-  assert.equal(matchBuddy(hook('other', { cwd: `${A.cwd}${path.win32.sep}` }), ctx), A.sessionId);
-});
-
-test('matchBuddy: a cwd shared by two sessions matches nothing', () => {
+  assert.equal(matchBuddy(hook('other', { cwd: A.cwd }), ctx), null);
+  assert.equal(matchBuddy(hook('other', { cwd: `${A.cwd}${path.win32.sep}` }), ctx), null);
   assert.equal(matchBuddy(hook('other', { cwd: B.cwd }), { kept: [A, B, C], visible: [A, B, C], home: HOME }), null);
-  // Also when the other one is dismissed.
-  assert.equal(matchBuddy(hook('other', { cwd: B.cwd }), { kept: [A, B, C], visible: [A, B], home: HOME }), null);
 });
 
-test('matchBuddy: a fallback match to a hidden buddy gives null', () => {
+test('matchBuddy: an unknown id with another session\'s transcript path matches nothing', () => {
+  const ctx = { kept: [A], visible: [A], home: HOME };
+  const elsewhere = transcriptPath(HOME, A.cwd, 'dddddddd-0000-0000-0000-000000000004');
+  assert.equal(matchBuddy(hook('other', { cwd: A.cwd, transcriptPath: elsewhere }), ctx), null);
+});
+
+test('matchBuddy: a transcript match to a hidden buddy gives null', () => {
   const ctx = { kept: [A, B], visible: [A], home: HOME };
-  assert.equal(matchBuddy(hook('other', { cwd: B.cwd }), ctx), null);
+  const tp = transcriptPath(HOME, B.cwd, B.sessionId);
+  assert.equal(matchBuddy(hook('other', { transcriptPath: tp }), ctx), null);
 });
 
 test('matchBuddy: nothing matches gives null', () => {
