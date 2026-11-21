@@ -10,26 +10,54 @@ const MAX_OPTIONS = 4;
 const MAX_TEXT = 300;
 
 // Permission prompts are held only for shell commands the card can show in
-// full: Bash or PowerShell with a command of at most MAX_COMMAND characters.
-// Every other tool, and any longer command, falls through to Desktop at once.
+// full: Bash or PowerShell with a command of at most MAX_COMMAND characters
+// and MAX_LINES lines, with no run of MAX_BLANK_RUN or more blank lines, and
+// a tool_input with no keys beyond INPUT_KEYS. Every other prompt falls
+// through to Desktop at once.
 const PERMISSION_TOOLS = new Set(['Bash', 'PowerShell']);
 const MAX_COMMAND = 600;
+const MAX_LINES = 8;
+const MAX_BLANK_RUN = 3;
+// Keys that do not change what runs. Any other (run_in_background,
+// dangerouslyDisableSandbox, ...) would be approved unseen.
+const INPUT_KEYS = new Set(['command', 'description', 'timeout']);
 // Characters that would make the shown command differ from the one that
 // runs: control characters other than tab, line feed and a carriage return
 // that starts a CRLF pair; invisible format characters (bidi overrides,
-// zero-width marks); and the Unicode line and paragraph separators, which
-// show as a line break but do not run as one.
-const HIDDEN_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]|\r(?!\n)|\p{Cf}/u;
+// zero-width marks); the Unicode line and paragraph separators, which show
+// as a line break but do not run as one; and blank-looking characters
+// (spaces other than space and tab, Hangul fillers, the blank Braille
+// pattern, the combining grapheme joiner, variation selectors).
+const HIDDEN_CHARS =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\u2800\u3164\u115f\u1160\u034f\ufe00-\ufe0f\u180e]|\r(?!\n)|\p{Cf}/u;
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// True when the lines fit the card: at most MAX_LINES, and no run of
+// MAX_BLANK_RUN or more blank lines that could push a part out of sight.
+function fitsLines(value) {
+  const lines = value.split('\n');
+  if (lines.length > MAX_LINES) return false;
+  let blanks = 0;
+  for (const line of lines) {
+    blanks = line.trim() === '' ? blanks + 1 : 0;
+    if (blanks >= MAX_BLANK_RUN) return false;
+  }
+  return true;
 }
 
 // The command when the card can show all of it as it runs, else null.
 function showableCommand(value) {
   if (typeof value !== 'string' || value.trim() === '') return null;
   if (value.length > MAX_COMMAND || HIDDEN_CHARS.test(value)) return null;
+  if (!fitsLines(value)) return null;
   return value;
+}
+
+function knownInputKeys(input) {
+  return Object.keys(input).every((key) => INPUT_KEYS.has(key));
 }
 
 // Cuts to at most `max` UTF-16 units without leaving half a surrogate pair.
@@ -65,7 +93,6 @@ function parseHook(body) {
   const base = {
     sessionId,
     transcriptPath: typeof body.transcript_path === 'string' ? body.transcript_path : '',
-    cwd: typeof body.cwd === 'string' ? body.cwd : '',
   };
   const event = body.hook_event_name;
 
@@ -86,6 +113,7 @@ function parseHook(body) {
   // and every other tool fall through to Desktop.
   if (event === 'PermissionRequest' && PERMISSION_TOOLS.has(toolName)) {
     const input = isObject(body.tool_input) ? body.tool_input : {};
+    if (!knownInputKeys(input)) return null;
     const command = showableCommand(input.command);
     if (command === null) return null;
     return { kind: 'permission', ...base, toolName, command };

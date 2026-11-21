@@ -2,12 +2,18 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createRendererHealth, RELOAD_DELAY_MS, MAX_RELOADS, RELOAD_WINDOW_MS } = require('../src/main/health');
+const { createRendererHealth, RELOAD_DELAY_MS } = require('../src/main/health');
 
-test('defaults: reload after 1 s, at most 3 reloads a minute', () => {
-  assert.equal(RELOAD_DELAY_MS, 1000);
-  assert.equal(MAX_RELOADS, 3);
-  assert.equal(RELOAD_WINDOW_MS, 60000);
+test('defaults: a fourth crash within a minute stops the reloading', () => {
+  const h = createRendererHealth();
+  for (const at of [0, 1000, 2000]) {
+    h.loaded();
+    assert.equal(h.gone(at), RELOAD_DELAY_MS, `crash at ${at}`);
+  }
+  h.loaded();
+  assert.equal(h.gone(59999), null, 'fourth crash within the window');
+  // Once the first crash is a full window old it no longer counts.
+  assert.equal(h.gone(60000 + 1000), RELOAD_DELAY_MS);
 });
 
 test('a page is not alive until it has loaded', () => {

@@ -109,7 +109,8 @@ function askAnswers(parsed, sent) {
 }
 
 // The hook response for an answer from the renderer, or null when the
-// answer does not fit the prompt (it is then ignored and the hold runs out).
+// answer does not fit the prompt (main then refuses it, the prompt stays
+// held and the card shows again).
 // An ask needs one answer per question, keyed by the shown question text:
 // a shown label for a single-select question, a non-empty list of distinct
 // shown labels for a multi-select one.

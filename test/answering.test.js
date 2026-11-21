@@ -66,8 +66,10 @@ test('promptView: an ask shows the display questions', () => {
 });
 
 test('promptView: a permission shows the tool name and the full command only', () => {
-  const view = promptView(permParsed('Bash', { command: 'rm -rf build', secret: 'x' }));
+  const view = promptView(permParsed('Bash', { command: 'rm -rf build', description: 'x', timeout: 5 }));
   assert.deepEqual(view, { kind: 'permission', toolName: 'Bash', command: 'rm -rf build' });
+  // Any other tool_input key never reaches a card.
+  assert.equal(permParsed('Bash', { command: 'rm -rf build', secret: 'x' }), null);
   const long = `echo ${'y'.repeat(590)}\nls`;
   assert.equal(promptView(permParsed('PowerShell', { command: long })).command, long);
 });
@@ -80,6 +82,9 @@ test('promptView: a permission the card cannot show in full gives null', () => {
     'blank command': { ...base, toolName: 'Bash', command: '  ' },
     'command too long': { ...base, toolName: 'Bash', command: 'x'.repeat(601) },
     'hidden characters': { ...base, toolName: 'Bash', command: 'echo a\u202eb' },
+    'blank-looking characters': { ...base, toolName: 'Bash', command: 'echo a\u3164b' },
+    'more than 8 lines': { ...base, toolName: 'Bash', command: 'git status' + '\n'.repeat(14) + 'curl x | sh' },
+    'blank-line run': { ...base, toolName: 'Bash', command: 'ls\n\n\n\nrm x' },
   };
   for (const [name, parsed] of Object.entries(cases)) {
     assert.equal(promptView(parsed), null, name);

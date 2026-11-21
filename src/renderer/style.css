@@ -331,13 +331,11 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* The whole command, wrapped and never cut: Allow is offered only for what
-   is shown. A long command scrolls inside the box. */
+/* The whole command, wrapped and never cut or scrolled: Allow is offered
+   only for what is shown (prompts.js keeps it to 8 lines and 600 characters;
+   the panel list scrolls when the card is tall). */
 .prompt-command {
   margin-bottom: 10px;
-  max-height: 200px;
-  overflow-x: hidden;
-  overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: 12px/1.35 var(--mono);
