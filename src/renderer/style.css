@@ -173,8 +173,14 @@ button:focus-visible {
 
 .buddy-body:hover { background: var(--row-hover); }
 
-.name {
+.name-box {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.name {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -185,6 +191,16 @@ button:focus-visible {
 
 .buddy.waiting .name { font-weight: 600; }
 .buddy.idle .name { color: var(--muted); }
+
+/* Finished: idle, just done and not looked at yet. Existing tokens for now. */
+.buddy.finished { --accent: var(--focus); }
+.buddy.finished .name { color: var(--fg); }
+
+.state-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--focus);
+}
 
 .icon-btn {
   flex: none;

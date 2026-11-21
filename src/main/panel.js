@@ -31,14 +31,16 @@ function createSnapshotGate() {
 // The renderer gets only what it shows or sends back. Internal fields such as
 // cwd, pid and updatedAt stay in the main process, and leaving them out also
 // keeps them out of the snapshot gate's comparison. `prompt` is set only
-// while a hook prompt for the session is held.
-function toSnapshotSession(s, steps, prompt) {
+// while a hook prompt for the session is held. `finished` is true only for a
+// session that just finished and was not looked at yet (finished.js).
+function toSnapshotSession(s, steps, prompt, finished) {
   const out = {
     sessionId: s.sessionId,
     hostSessionId: s.hostSessionId,
     name: s.name,
     status: s.status,
     steps,
+    finished: finished === true,
   };
   if (prompt) out.prompt = prompt;
   return out;

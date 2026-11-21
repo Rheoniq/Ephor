@@ -10,6 +10,8 @@
     waiting: { label: 'Waiting for you' },
     idle: { label: 'Idle' },
   };
+  // An idle session that just finished and was not looked at yet.
+  const FINISHED = { label: 'Finished' };
 
   const panel = document.getElementById('panel');
   const list = document.getElementById('buddies');
@@ -147,8 +149,10 @@
     const status = Object.prototype.hasOwnProperty.call(STATUS, s.status) ? s.status : 'idle';
     const name = str(s.name) || 'Untitled session';
     const isOpen = expanded.has(id);
+    const isFinished = status === 'idle' && s.finished === true;
+    const label = isFinished ? FINISHED.label : STATUS[status].label;
 
-    const li = el('li', `buddy ${status}`);
+    const li = el('li', isFinished ? `buddy ${status} finished` : `buddy ${status}`);
     li.dataset.sessionId = id;
 
     const row = el('div', 'buddy-row');
@@ -159,7 +163,15 @@
     body.setAttribute('aria-expanded', String(isOpen));
     body.title = name;
     const avatar = window.HuddleAvatar.createAvatar(document, id, status);
-    body.append(avatar, el('span', 'sr-only', `${STATUS[status].label}: `), el('span', 'name', name));
+    const nameBox = el('span', 'name-box');
+    nameBox.append(el('span', 'name', name));
+    if (isFinished) {
+      // Visible label; screen readers get it from the sr-only prefix.
+      const tag = el('span', 'state-label', label);
+      tag.setAttribute('aria-hidden', 'true');
+      nameBox.append(tag);
+    }
+    body.append(avatar, el('span', 'sr-only', `${label}: `), nameBox);
     body.addEventListener('click', () => {
       if (expanded.has(id)) expanded.delete(id);
       else expanded.add(id);

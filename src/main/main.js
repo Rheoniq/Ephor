@@ -25,6 +25,7 @@ const { createDismissals } = require('./dismissals');
 const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
 const { createGrace } = require('./grace');
+const { createFinished } = require('./finished');
 const { clampHeight, createSnapshotGate, toSnapshotSession } = require('./panel');
 const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
@@ -85,6 +86,8 @@ const TOKEN_FILE = 'hook-token';
 const MAX_PROMPT_ID_LEN = 100;
 
 const dismissals = createDismissals();
+const finished = createFinished();
+let demoPrimed = false;
 const detector = createEventDetector();
 const toastQueue = createToastQueue({ show: showToast, durationMs: TOAST_MS });
 let toastWin = null;
@@ -137,18 +140,37 @@ function promptFor(sessionId) {
   return undefined;
 }
 
-// Returns all kept sessions (before dismissal filtering) and the snapshot.
+// The panel shows a session that is busy or waiting, or that just finished and
+// was not looked at yet; a plain idle session is not shown. A dismissed session
+// stays hidden either way. dismissals.visible runs for every kept session (no
+// short circuit), because it records an idle status for a dismissed session.
+function isShown(s) {
+  const notDismissed = dismissals.visible(s.sessionId, s.status);
+  const active = s.status === 'busy' || s.status === 'waiting';
+  return notDismissed && (active || finished.isFinished(s.sessionId));
+}
+
+// Returns all kept sessions (before visibility filtering) and the snapshot.
 function buildDemoSnapshot() {
   const kept = demoSessions();
+  // Demo statuses never change, so the first read is primed with each demo
+  // session's `before` status; a session busy before and idle now is finished.
+  if (!demoPrimed) {
+    finished.update(kept.map((s) => ({ sessionId: s.sessionId, status: s.before || s.status })));
+    demoPrimed = true;
+  }
+  finished.update(kept);
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
-  const visible = kept.filter((s) => dismissals.visible(s.sessionId, s.status));
+  const visible = kept.filter(isShown);
   lastKept = kept;
   lastVisible = visible;
-  const sessions = visible.map((s) => toSnapshotSession(s, s.steps, promptFor(s.sessionId)));
+  const sessions = visible.map((s) =>
+    toSnapshotSession(s, s.steps, promptFor(s.sessionId), finished.isFinished(s.sessionId)),
+  );
   return { kept, snapshot: { sessions } };
 }
 
-// Returns all kept sessions (before dismissal filtering) and the snapshot.
+// Returns all kept sessions (before visibility filtering) and the snapshot.
 function buildSnapshot() {
   if (DEMO) return buildDemoSnapshot();
   // Sessions missing from one read stay for a short grace period.
@@ -156,13 +178,16 @@ function buildSnapshot() {
   const keptIds = kept.map((s) => s.sessionId);
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   dismissals.prune(keptIds);
+  finished.update(kept);
   for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
-  const visible = kept.filter((s) => dismissals.visible(s.sessionId, s.status));
+  const visible = kept.filter(isShown);
   lastKept = kept;
   lastVisible = visible;
   // Before the snapshot is built, so an ended hold shows no card.
   endStaleHolds(visible);
-  const sessions = visible.map((s) => toSnapshotSession(s, safeSteps(s), promptFor(s.sessionId)));
+  const sessions = visible.map((s) =>
+    toSnapshotSession(s, safeSteps(s), promptFor(s.sessionId), finished.isFinished(s.sessionId)),
+  );
   return { kept, snapshot: { sessions } };
 }
 
@@ -667,6 +692,7 @@ ipcMain.on('huddle:dismiss', (event, sessionId) => {
   if (typeof sessionId !== 'string' || !lastStatus.has(sessionId)) return;
   // In demo mode lastStatus holds only fake ids, so this touches nothing real.
   dismissals.dismiss(sessionId, lastStatus.get(sessionId));
+  finished.markSeen(sessionId);
   scheduleRefresh();
 });
 
@@ -722,7 +748,14 @@ ipcMain.on('huddle:answer', (event, payload) => {
 ipcMain.handle('huddle:open', async (event, hostSessionId) => {
   if (!fromOurWindow(event)) return 'failed';
   if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
-  if (!lastSnapshot.sessions.some((s) => s.hostSessionId === hostSessionId)) return 'failed';
+  const shown = lastSnapshot.sessions.find((s) => s.hostSessionId === hostSessionId);
+  if (!shown) return 'failed';
+  // Using the arrow counts as looking at the session: a finished buddy leaves
+  // the panel on the next refresh.
+  if (shown.finished) {
+    finished.markSeen(shown.sessionId);
+    scheduleRefresh();
+  }
   if (DEMO) {
     console.log(`[huddle] demo: open ${hostSessionId} (no-op)`);
     return 'demo';

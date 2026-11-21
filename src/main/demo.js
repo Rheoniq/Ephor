@@ -24,6 +24,18 @@ function demoSessions() {
     },
     {
       ...base,
+      // `before` is demo only: main primes the first read with it, so this
+      // session counts as gone busy to idle and shows as finished.
+      sessionId: 'demo-finished',
+      hostSessionId: 'local_demo-finished',
+      name: 'Review the invoice export and fix the totals',
+      status: 'idle',
+      before: 'busy',
+      steps: ['Read src/export.js', 'Edit src/export.js', 'Ran: npm test'],
+    },
+    {
+      ...base,
+      // Plain idle: never shown in the panel.
       sessionId: 'demo-idle',
       hostSessionId: 'local_demo-idle',
       name: 'Notification sounds configuration',

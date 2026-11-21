@@ -20,7 +20,16 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
     name: 'N',
     status: 'busy',
     steps: ['x'],
+    finished: false,
   });
+});
+
+test('toSnapshotSession sets finished as a boolean', () => {
+  const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'idle', cwd: 'C:\\x' };
+  assert.equal(toSnapshotSession(s, [], undefined, true).finished, true);
+  assert.equal(toSnapshotSession(s, [], undefined, false).finished, false);
+  assert.equal(toSnapshotSession(s, []).finished, false);
+  assert.equal(toSnapshotSession(s, [], undefined, 'yes').finished, false);
 });
 
 test('toSnapshotSession adds a prompt only when one is given', () => {
@@ -32,6 +41,7 @@ test('toSnapshotSession adds a prompt only when one is given', () => {
     name: 'N',
     status: 'waiting',
     steps: [],
+    finished: false,
     prompt,
   });
   assert.equal('prompt' in toSnapshotSession(s, [], null), false);
