@@ -97,15 +97,17 @@
     return card;
   }
 
+  // Renders now, or once no pointer is down, so a press keeps its button.
+  function renderWhenFree() {
+    if (hold.isHeld()) setTimeout(renderWhenFree, 100);
+    else render();
+  }
+
   // Re-render when a confirm click runs out, so "Confirm allow" turns back
-  // into "Allow". Waits while a pointer is down so the press keeps its button.
+  // into "Allow".
   function scheduleArmExpiry() {
     clearTimeout(armTimer);
-    const tick = () => {
-      if (hold.isHeld()) armTimer = setTimeout(tick, 100);
-      else render();
-    };
-    armTimer = setTimeout(tick, window.HuddlePrompt.ARM_MS + 50);
+    armTimer = setTimeout(renderWhenFree, window.HuddlePrompt.ARM_MS + 50);
   }
 
   // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
@@ -142,9 +144,9 @@
   function renderPrompt(prompt) {
     const st = promptStateFor(prompt);
     const view = st && st.current();
-    // An answered card is hidden at once, but main may still ignore the
-    // answer (it does not fit, or its timing is refused). The hold then runs
-    // to its 15 s timeout and Desktop shows its own prompt.
+    // An answered card is hidden at once. If main refuses the answer (it
+    // does not fit, or its timing is off), it says so and the card comes
+    // back (onAnswerRefused below).
     if (!view || view.answered) return null;
     return view.kind === 'ask' ? renderAsk(st, view) : renderPermission(st, view);
   }
@@ -409,6 +411,13 @@
     if (state && typeof state.hideTitle === 'string') hideBtn.title = state.hideTitle;
     const next = !!(state && state.collapsed === true);
     if (next !== collapsed) setCollapsed(next);
+  });
+
+  // Main refused an answer or an arm: the card is shown again, unarmed.
+  window.huddle.onAnswerRefused((payload) => {
+    const id = window.HuddlePrompt.refusedId(payload);
+    const st = id === null ? null : promptStates.get(id);
+    if (st && st.refused()) renderWhenFree();
   });
 
   window.huddle.onSnapshot((snapshot) => hold.push(snapshot));

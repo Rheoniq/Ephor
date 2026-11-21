@@ -817,6 +817,13 @@ ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
   setCollapsed(collapsed);
 });
 
+// Tells the renderer that main refused an answer or an arm for a held
+// prompt, so its card comes back instead of waiting for the hold to run out.
+function refuseAnswer(id) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send('huddle:answer-refused', id);
+}
+
 // The first Allow click on a permission card. Main keeps the time, so an
 // allow counts only as a second step 400 ms to 5 s later (answerInTime).
 ipcMain.on('huddle:arm', (event, id) => {
@@ -824,14 +831,15 @@ ipcMain.on('huddle:arm', (event, id) => {
   if (typeof id !== 'string' || id.length > MAX_PROMPT_ID_LEN) return;
   const entry = prompts.get(id);
   if (entry && !armHold(entry, performance.now())) {
-    console.error('[huddle] arm ignored: not a permission prompt, or too soon');
+    console.error('[huddle] arm refused: not a permission prompt, or too soon');
+    refuseAnswer(entry.id);
   }
 });
 
 // An answer from a prompt card: { id, kind, answers?, allow? }. It counts
 // only for a held prompt, only when it fits that prompt exactly (see
-// buildResponse) and only at an acceptable time (see answerInTime);
-// anything else is ignored and the hold runs out.
+// buildResponse) and only at an acceptable time (see answerInTime); a
+// refused answer is reported back and the card shows again.
 ipcMain.on('huddle:answer', (event, payload) => {
   if (!fromOurWindow(event)) return;
   const at = performance.now();
@@ -841,11 +849,13 @@ ipcMain.on('huddle:answer', (event, payload) => {
   if (!entry) return;
   const response = buildResponse(entry.parsed, payload);
   if (!response) {
-    console.error(`[huddle] answer ignored: it does not fit the ${entry.view.kind} prompt`);
+    console.error(`[huddle] answer refused: it does not fit the ${entry.view.kind} prompt`);
+    refuseAnswer(entry.id);
     return;
   }
   if (!answerInTime(entry, payload, at)) {
-    console.error(`[huddle] answer ignored: ${entry.view.kind} prompt answered too soon or not confirmed`);
+    console.error(`[huddle] answer refused: ${entry.view.kind} prompt answered too soon or not confirmed`);
+    refuseAnswer(entry.id);
     return;
   }
   prompts.delete(entry.id);

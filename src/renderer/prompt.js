@@ -8,16 +8,25 @@
 (function (root) {
   // Timing guards against clicks the user did not mean. Main checks the same
   // rules (src/main/answering.js: 500 ms age, Allow 400 ms to 5 s after the
-  // arm); the values here are a little stricter, so an answer this card
-  // sends is never refused by main for its timing. Main's clock starts
-  // earlier than this card's, which only adds margin.
+  // arm); the values here are stricter by 200 ms and 500 ms, room for IPC
+  // delays, so main rarely refuses what this card sends. Main's clock starts
+  // earlier than this card's, which only adds margin. When main does refuse
+  // an answer or an arm, it says so (huddle:answer-refused) and the card
+  // comes back through refused().
   // A click on a card or question younger than this is ignored: it may have
   // been meant for what was under the cursor before the card appeared.
   const MIN_AGE_MS = 500;
   // A first click on Allow arms it; a second click sends only between these
   // two times later, so the second click of a double-click never approves.
-  const MIN_CONFIRM_MS = 450;
-  const ARM_MS = 4900;
+  const MIN_CONFIRM_MS = 600;
+  const ARM_MS = 4500;
+  // Prompt ids from main are UUIDs; main ignores ids longer than this.
+  const MAX_ID_LEN = 100;
+
+  // The prompt id in a huddle:answer-refused message, or null.
+  function refusedId(payload) {
+    return typeof payload === 'string' && payload !== '' && payload.length <= MAX_ID_LEN ? payload : null;
+  }
 
   function isObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -190,6 +199,18 @@
       return true;
     }
 
+    // Main refused the answer or the arm sent for this prompt: the card is
+    // shown again, unarmed, at the question it was on (earlier answers of an
+    // ask are kept). A card that was hidden by the answer gets a new minimum
+    // age, as it comes back under the cursor. Returns false with no prompt.
+    function refused() {
+      if (!prompt) return false;
+      if (answered) shownAt = now();
+      answered = false;
+      armedAt = null;
+      return true;
+    }
+
     function current() {
       if (!prompt) return null;
       if (prompt.kind === 'ask') {
@@ -223,11 +244,12 @@
       confirmPending,
       armAllow,
       deny,
+      refused,
       reset,
     };
   }
 
-  const api = { createPromptState, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
+  const api = { createPromptState, refusedId, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddlePrompt = api;
 })(typeof window !== 'undefined' ? window : globalThis);

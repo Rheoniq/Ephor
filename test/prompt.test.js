@@ -2,7 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createPromptState, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
+const { createPromptState, refusedId, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
+const main = require('../src/main/answering');
 
 function question(text, labels, multiSelect = false) {
   return {
@@ -42,10 +43,14 @@ test('starts empty', () => {
   assert.equal(st.current(), null);
 });
 
-test('timing constants keep the renderer a little stricter than main', () => {
+test('timing constants keep the renderer clearly stricter than main', () => {
   assert.equal(MIN_AGE_MS, 500);
-  assert.ok(MIN_CONFIRM_MS >= 400 && MIN_CONFIRM_MS < 500);
-  assert.ok(ARM_MS <= 5000 && ARM_MS > 4000);
+  assert.equal(MIN_CONFIRM_MS, 600);
+  assert.equal(ARM_MS, 4500);
+  // Room for IPC delays, so main does not refuse what the card sends.
+  assert.ok(MIN_AGE_MS >= main.MIN_ANSWER_AGE_MS);
+  assert.ok(MIN_CONFIRM_MS - main.MIN_CONFIRM_MS >= 200);
+  assert.ok(main.ARM_MS - ARM_MS >= 500);
 });
 
 test('two-question ask is done only after the second answer, keyed by question text', () => {
@@ -282,6 +287,84 @@ test('an answered ask takes no more answers', () => {
   assert.equal(st.answerQuestion('A').done, true);
   settle();
   assert.deepEqual(st.answerQuestion('B'), { done: false });
+});
+
+test('refused after an Allow re-shows the card unarmed, with its own minimum age', () => {
+  const { st, tick, settle } = make();
+  st.show(permission('p1'));
+  settle();
+  st.armAllow();
+  tick(MIN_CONFIRM_MS);
+  assert.equal(st.armAllow(), 'send');
+  assert.equal(st.current().answered, true);
+  assert.equal(st.refused(), true);
+  assert.equal(st.current().answered, false);
+  assert.equal(st.current().armed, false);
+  // The card comes back where the click landed: a click right away is ignored.
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.confirmPending(), false);
+  assert.equal(st.deny(), false);
+  settle();
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.confirmPending(), true);
+  tick(MIN_CONFIRM_MS);
+  assert.equal(st.armAllow(), 'send');
+});
+
+test('refused after a Deny re-shows the card', () => {
+  const { st, settle } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.deny(), true);
+  assert.equal(st.refused(), true);
+  assert.equal(st.current().answered, false);
+  settle();
+  assert.equal(st.deny(), true);
+});
+
+test('refused arm resets the confirm state and keeps the card clickable', () => {
+  const { st, settle } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.current().armed, true);
+  assert.equal(st.refused(), true);
+  assert.equal(st.current().armed, false);
+  assert.equal(st.current().answered, false);
+  // The card never left, so no new minimum age: the next click arms again.
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.confirmPending(), true);
+});
+
+test('refused ask shows the last question again and keeps the earlier answers', () => {
+  const { st, settle } = make();
+  st.show(ask('p1', [question('Q1?', ['A', 'B']), question('Q2?', ['C', 'D'])]));
+  settle();
+  st.answerQuestion('A');
+  settle();
+  assert.equal(st.answerQuestion('D').done, true);
+  assert.equal(st.refused(), true);
+  const view = st.current();
+  assert.equal(view.answered, false);
+  assert.equal(view.index, 1);
+  assert.deepEqual(st.answerQuestion('C'), { done: false }, 'too soon after it came back');
+  settle();
+  const r = st.answerQuestion('C');
+  assert.equal(r.done, true);
+  assert.deepEqual({ ...r.answers }, { 'Q1?': 'A', 'Q2?': 'C' });
+});
+
+test('refusedId accepts only a prompt id string', () => {
+  assert.equal(refusedId('7c9e6679-7425-40de-944b-e07fc1f90ae7'), '7c9e6679-7425-40de-944b-e07fc1f90ae7');
+  for (const bad of [undefined, null, '', 7, {}, ['p1'], { id: 'p1' }, 'x'.repeat(101)]) {
+    assert.equal(refusedId(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('refused with no prompt does nothing', () => {
+  const st = createPromptState();
+  assert.equal(st.refused(), false);
+  assert.equal(st.current(), null);
 });
 
 test('reset clears the prompt and its progress', () => {

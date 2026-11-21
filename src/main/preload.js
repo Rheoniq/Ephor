@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('huddle', {
   arm(id) {
     ipcRenderer.send('huddle:arm', id);
   },
+  // Main refused an answer or an arm for this prompt id; the card comes back.
+  onAnswerRefused(cb) {
+    ipcRenderer.on('huddle:answer-refused', (_event, id) => cb(id));
+  },
   // Header buttons: hide like the hotkey; quit the app.
   hide() {
     ipcRenderer.send('huddle:hide');
