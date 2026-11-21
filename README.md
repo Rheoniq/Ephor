@@ -1,50 +1,86 @@
 # Huddle
 
-Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Desktop (Claude Code) orchestrator sessions, their status and their latest steps. The arrow on a session takes you to that session in Claude Desktop. The panel hides itself when there are no sessions.
+Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Desktop (Claude Code) sessions that need attention, their status and their latest steps. The arrow on a session takes you to that session in Claude Desktop. The panel hides itself when nothing needs showing.
 
-Version 0.2.0 adds: a hotkey to hide and show the panel, a collapsed pill, quiet mode, in-app toasts, an avatar per session, and answering Claude's option and permission prompts from the panel.
+Version 0.2.0 adds: header buttons to hide and quit, a hotkey, a collapsed pill you can drag, quiet mode, toasts, a pixel creature avatar per session, and answering Claude's option prompts and shell command approvals from the panel.
 
-## What v2 adds
+## Which sessions show
 
-- **Hotkey:** `Ctrl+Alt+H` hides and shows the panel. The tray item "Hide / Show panel" does the same. If the hotkey cannot be registered, the tray shows a note and the tray item still works.
+A session is shown only when it is:
+
+- busy,
+- waiting for you,
+- finished and not yet looked at, or
+- holding a prompt.
+
+Plain idle sessions are never shown. "Finished" means the session went from busy or waiting to idle while Huddle ran. It clears when you open the session with the arrow (a successful open), when you dismiss it, or when the session is busy or waiting again. A session that is already idle when Huddle starts is never "finished".
+
+## Panel controls
+
+- **Quit** (power icon, leftmost in the header): closes Huddle at once, with no confirmation. Held prompts go back to Desktop. A mis-click ends answering from the panel until you start Huddle again.
+- **Hide** (cross in the header): hides the panel, the same as the hotkey. Held prompts are released, so Desktop shows its own prompt. Hidden is not kept across restarts. The tray item "Panel hidden" shows the state and toggles it.
+- **Hotkey:** `Ctrl+Alt+H` hides and shows the panel. It ignores a hide request when nothing is on screen. If the hotkey cannot be registered, the tray shows a note and the tray item still works.
 - **Collapse:** the collapse button (or tray "Collapse panel") shrinks the panel to one pill with the session count and a "!" dot when a session waits.
-- **Toasts:** a small window under the panel says "needs you" when a session starts waiting and "finished" when a busy session goes idle. It never takes focus and lets clicks through. Toasts also show while the panel is hidden; not for dismissed sessions.
-- **Quiet mode:** tray "Quiet mode" turns toasts off and stops the panel from holding prompts (Desktop handles them).
-- **Avatars:** each session gets a small blob character. Its color comes from the session id; its face shows busy, waiting or idle. Animation follows the system's reduced-motion setting.
-- The panel stays above borderless full-screen windows (such as a browser video in full screen).
+  - Click the pill to expand it. Press and drag to move it (it moves only after 4 px; at least 24 px stays on screen). The pill position is not saved across restarts.
+  - The expanded panel moves by its header. On expand, the panel is fitted inside the screen's work area.
+  - A prompt expands the pill by itself and collapses it again afterwards, without changing the saved setting.
+- **Quiet mode** (tray): silences toasts and stops the panel from holding prompts; Desktop handles them.
+
+## Toasts
+
+A small window says "needs you" when a session starts waiting and "finished" when a busy session goes idle (not when a waiting session goes idle).
+
+- It shows for 4 seconds.
+- Its close cross is the only clickable part. The rest lets clicks through and never takes focus.
+- It sits below the panel or pill, or above it when there is no room below. While the panel is hidden, it sits in the top-right corner of the display.
+- Quiet mode silences toasts. Dismissed sessions get none.
+
+## Look
+
+Each session gets a small pixel creature: 6 colors and 3 small shape variants, picked from the session id, with eyes that show busy, waiting or idle. Animation follows the system's reduced-motion setting. The style is a warm Anthropic look set in Georgia and Segoe UI; Anthropic's own fonts are licensed and are not bundled. Light and dark follow the system.
+
+The panel stays above borderless full-screen windows (such as a browser video in full screen).
 
 ## Answering from the panel
 
-When a session raises a prompt, its card shows it:
+When a session raises a prompt that Huddle can handle, its card shows it:
 
-- `AskUserQuestion`: the question and up to 4 option buttons. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end.
-- Permission prompts (any tool): the tool name, a one-line summary (command, path or URL), Allow and Deny. Allow takes two clicks: the first turns it into "Confirm allow", the second must come at least half a second later and within 5 seconds. Deny is one click.
-- Clicks in the first half second after a card appears are ignored, so a stray double-click cannot answer.
+- **`AskUserQuestion`:** the question and its option buttons, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else.
+- **Bash and PowerShell commands** of at most 600 characters: the full command, wrapped, with Allow and Deny. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
+- Clicks in the first moment after a card appears are ignored, so a stray double-click cannot answer.
 
-What is not handled: free typing, "Other" answers, editing a command, more than 4 questions or options. For those the arrow opens the session in Claude Desktop, and Desktop shows its own prompt.
+Every other tool (Write, Edit, MCP tools and so on) and every longer command falls through to Desktop at once. Free typing, "Other" answers and editing a command are not handled; the arrow opens the session in Desktop for those.
+
+How prompts reach the panel:
+
+- The hooks fire for every Claude Code session on this machine (Desktop, CLI, IDE, SDK). Huddle matches a prompt to a shown session by the hook's `session_id`, then by transcript path. A prompt from a session Huddle does not show gets an immediate "no decision", so Desktop (or the CLI) shows its own prompt.
+- One prompt per session at a time; a second one goes straight to Desktop.
 
 Desktop stays the fallback for everything:
 
-- If nobody answers within 15 seconds, the card goes away and Desktop shows its normal prompt.
-- When the panel is hidden or quiet mode is on, Huddle does not hold the prompt; Desktop handles it at once. A collapsed pill expands itself and holds.
+- A prompt is held at most 15 seconds (the hook timeout is 20 seconds). Then the card goes away and Desktop shows its normal prompt.
+- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel is dead or hung, the session was dismissed, or Huddle is closed.
 - Hiding the panel, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
-- One prompt per session at a time; a second one goes straight to Desktop.
+- If port 47821 is in use, answering is off, the tray shows "Answering off: port 47821 in use", and Huddle retries every 30 seconds.
+- Hook bodies over 64 KiB get no decision, so Desktop shows its own prompt.
 
 ### Hook setup and token
 
-Answering needs two `http` hooks in `~/.claude/settings.json` and the token in the user environment variable `HUDDLE_HOOK_TOKEN`. Huddle never edits that file or sets the variable. The exact entries, the token steps (tray "Copy token setup command", run the `setx` line, restart Claude Desktop) and the verified facts are in [docs/superpowers/notes/hook-setup.md](docs/superpowers/notes/hook-setup.md); the JSON shape is in `docs/superpowers/notes/hook-settings.json`.
+Answering needs two `http` hooks in `~/.claude/settings.json` and the token in the user environment variable `HUDDLE_HOOK_TOKEN`. Huddle never edits that file or sets the variable. The exact entries, the token steps and the verified facts are in [docs/superpowers/notes/hook-setup.md](docs/superpowers/notes/hook-setup.md); the JSON shape is in `docs/superpowers/notes/hook-settings.json`.
+
+The token is 64 hex characters. The hook gate test used a shorter test token, so after the first start of 0.2.0 run the tray "Copy token setup command" again, paste and run the `setx` line, then restart Claude Desktop fully. The copied token can stay in Windows clipboard history (Win+V) if that is on; clear the entry.
 
 Without the hooks or the token, Huddle works as a viewer and Desktop shows every prompt.
 
 ### Rollback
 
 1. Delete the two Huddle entries from `~/.claude/settings.json` (keep the guard entry).
-2. Run `setx HUDDLE_HOOK_TOKEN ""`.
+2. Run `reg delete HKCU\Environment /v HUDDLE_HOOK_TOKEN /f`. (`setx` with an empty value leaves an empty variable behind.)
 3. Restart Claude Desktop.
 
 ## Settings file
 
-Huddle keeps its settings in `settings.json` in its user-data folder (`%APPDATA%\Huddle\settings.json`), next to the token file `hook-token`:
+Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file `hook-token`. Electron names the folder after the product name. A folder first created as `%APPDATA%\huddle` keeps that spelling; Windows ignores case, so both are the same folder.
 
 ```
 { "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false }
@@ -52,9 +88,9 @@ Huddle keeps its settings in `settings.json` in its user-data folder (`%APPDATA%
 
 `hotkey` takes an Electron accelerator string. Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
 
-## v1 and v2
+## Running next to the first version
 
-v1 and v2 share the app name, the user-data folder and the single-instance lock. Close v1 (tray, Quit) before starting v2; otherwise v2 exits silently.
+Both versions use the app name Huddle, so they share the settings folder and the single-instance lock. Close the first version (tray, Quit) before starting 0.2.0; otherwise 0.2.0 exits silently.
 
 ## How it finds sessions
 
@@ -107,7 +143,7 @@ Build notes:
 
 ## Known vulnerabilities
 
-`npm audit` reports 8 vulnerabilities: 2 high (in `electron` and `extract-zip`) and 6 moderate (through `electron-builder`). They are not fixed in v1. The installed Electron is 41.7.1. `npm view electron versions` (checked 2026-11-20) shows 41.10.7 as the newest 41.x; it covers the advisories that end at 41.10.6, but several advisories, one of them high, are listed as fixed only from 42.11.x (42.11.16 for the high one). The newest releases are 42.11.18, 43.8.12 and 45.4.1. No upgrade has been made.
+`npm audit` reports 8 vulnerabilities: 2 high (in `electron` and `extract-zip`) and 6 moderate (through `electron-builder`). They are not fixed. The installed Electron is 41.7.1. `npm view electron versions` (checked 2026-11-20) shows 41.10.7 as the newest 41.x; it covers the advisories that end at 41.10.6, but several advisories, one of them high, are listed as fixed only from 42.11.x (42.11.16 for the high one). The newest releases are 42.11.18, 43.8.12 and 45.4.1. No upgrade has been made.
 
 ## Start at login
 
@@ -118,20 +154,27 @@ Right-click the Huddle tray icon and tick "Start at login". It is off by default
 - The arrow opens a `claude://` deep link. That link format is undocumented and may break with a Claude Desktop update. When the link cannot be opened, the arrow falls back to bringing the Claude Desktop window forward.
 - Windows only.
 - Full screen: the panel and toasts stay above borderless full-screen windows, not above exclusive full-screen apps (some games).
-- If Huddle is closed, the hook cannot connect and Desktop shows its own prompt.
-- Port 47821 is fixed. If another program holds it, the tray shows "Answering off: port 47821 in use" and Desktop handles every prompt.
-- Hook payloads over 64 KiB (for example a large `Write` or `Edit`) are refused, so Desktop shows its own prompt.
-- "Copy token setup command" goes through the Windows clipboard, so clipboard history may keep the token.
+- Port 47821 is fixed.
+- Write, Edit, MCP and other non-shell approvals always stay in Desktop.
 
-### Not yet verified on the real machine
+### Verified live (hook gate, 2026-11-20)
 
-- That Desktop's prompt appears with no delay when Huddle is closed, and after the 15 second hold.
+- Both hooks fire in the Desktop Code tab, before Desktop shows its own dialog.
+- The token header is expanded from the user environment variable.
+- The hook `session_id` matches the session registry.
+- A hook answer to a question, and a hook allow and deny, are honored and suppress Desktop's dialog.
+
+### Not yet verified
+
+- Fall-through when Huddle is closed, and after the 15 second hold.
+- The separator used to join multi-select answers, and the exact label Claude receives.
 - The interaction with the existing `pretool-guard` hook.
-- The `", "` separator Huddle uses to join multi-select answers, and the exact label Claude receives.
-- Whether Claude Code shows an error for a refused (over 64 KiB) payload.
+- What Claude Code does on a refused (over 64 KiB) payload that gets no decision.
+- Clicking the toast cross with a real pointer.
+- Two monitors and mixed DPI.
 
 ## Privacy
 
 Huddle reads `~/.claude` on your own machine. It makes no network requests beyond `127.0.0.1` and sends nothing anywhere. The hook server listens on `127.0.0.1` only and needs the token.
 
-A permission card shows a one-line summary of the tool input (a command, a path or a URL). It is shown only while the prompt is open and is never stored or logged.
+A command card shows the command only while the prompt is open; it is never stored or logged.
