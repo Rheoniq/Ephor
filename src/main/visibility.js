@@ -63,4 +63,25 @@ function createVisibility(initial) {
   };
 }
 
-module.exports = { createVisibility };
+// A session toast repeats what the open panel's card already shows, so it
+// shows only while the user cannot see the panel: hidden, collapsed to the
+// pill, or the window not on screen. Quiet mode silences every toast.
+function shouldToast({ quiet, hidden, collapsed, windowVisible }) {
+  if (quiet) return false;
+  return !!hidden || !!collapsed || !windowVisible;
+}
+
+// A toast that is not a copy of a card: an app notice (port in use), or the
+// demo toast forced on for checking the look.
+const keepsWhilePanelSeen = (toast) => !!toast && (toast.kind === 'notice' || toast.force === true);
+
+// The check at push time and again at show time (a toast queued while the
+// pill was collapsed does not show after the panel was opened). `state` is
+// the shape shouldToast takes.
+function toastAllowed(toast, state) {
+  if (state.quiet) return false;
+  if (keepsWhilePanelSeen(toast)) return true;
+  return shouldToast(state);
+}
+
+module.exports = { createVisibility, shouldToast, toastAllowed, keepsWhilePanelSeen };

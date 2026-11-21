@@ -36,6 +36,18 @@ function createToastQueue({ show, durationMs, setTimer = setTimeout, clearTimer 
       if (timer !== null) clearTimer(timer);
       next();
     },
+    // Keeps only the toasts `keep` accepts, in order. A showing toast it
+    // rejects ends its slot now and the next kept one shows. Returns true
+    // when the showing toast was dropped.
+    retain(keep) {
+      for (let i = pending.length - 1; i >= 0; i--) {
+        if (!keep(pending[i])) pending.splice(i, 1);
+      }
+      if (!current || keep(current)) return false;
+      if (timer !== null) clearTimer(timer);
+      next();
+      return true;
+    },
     clear() {
       if (timer !== null) clearTimer(timer);
       timer = null;

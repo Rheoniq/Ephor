@@ -116,3 +116,35 @@ test('clear stops the chain', () => {
   q.push(t('c'));
   assert.deepEqual(shown.map((x) => x.sessionId), ['a', 'c']);
 });
+
+test('retain drops rejected pending toasts and keeps the order of the rest', () => {
+  const { clock, shown, q } = setup();
+  q.push({ sessionId: null, kind: 'notice', name: 'port' });
+  q.push(t('a'));
+  q.push({ sessionId: 'c', kind: 'waiting', name: 'forced', force: true });
+  q.push(t('b'));
+  assert.equal(q.retain((x) => x.kind === 'notice' || x.force === true), false, 'the showing notice is kept');
+  clock.advance(4000 * 10);
+  assert.deepEqual(shown.map((x) => x.name), ['port', 'forced']);
+});
+
+test('retain ends a rejected showing toast and shows the next kept one at once', () => {
+  const { clock, shown, q } = setup();
+  q.push(t('a'));
+  q.push({ sessionId: null, kind: 'notice', name: 'port' });
+  assert.equal(q.retain((x) => x.kind === 'notice'), true);
+  assert.deepEqual(shown.map((x) => x.name), ['n-a', 'port']);
+  clock.advance(4000 * 10);
+  assert.equal(shown.length, 2);
+  assert.equal(clock.pending(), 0);
+});
+
+test('retain with nothing kept leaves the queue empty and ready', () => {
+  const { clock, shown, q } = setup();
+  q.push(t('a'));
+  q.push(t('b'));
+  assert.equal(q.retain(() => false), true);
+  assert.equal(clock.pending(), 0);
+  q.push(t('a'));
+  assert.deepEqual(shown.map((x) => x.sessionId), ['a', 'a'], 'a dropped toast no longer blocks its duplicate');
+});

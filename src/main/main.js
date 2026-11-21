@@ -30,7 +30,7 @@ const { clampHeight, createSnapshotGate, toSnapshotSession, isShown } = require(
 const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
-const { createVisibility } = require('./visibility');
+const { createVisibility, toastAllowed, keepsWhilePanelSeen } = require('./visibility');
 const { createRendererHealth } = require('./health');
 const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
@@ -102,6 +102,7 @@ const detector = createEventDetector();
 const toastQueue = createToastQueue({ show: showToast, durationMs: TOAST_MS });
 let toastWin = null;
 let toastTimer = null;
+let shownToast = null; // the toast in toastWin, if any
 let demoToastSent = false;
 const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
@@ -395,12 +396,34 @@ function copySetupCommand() {
   console.log('[huddle] token setup command copied');
 }
 
-// Queues a toast unless quiet mode is on or the session is dismissed.
-// The toast shows even when the panel is hidden.
-function pushToast(event, status) {
-  if (visibility.isQuiet()) return;
+// What the toast gate needs to know about the panel right now.
+function toastState() {
+  return {
+    quiet: visibility.isQuiet(),
+    hidden: visibility.isHidden(),
+    collapsed: visibility.isCollapsed(),
+    windowVisible: panelOnScreen(),
+  };
+}
+
+// Queues a toast unless quiet mode is on, the session is dismissed, or the
+// panel is open on screen (its card already says it). `force` (demo toast
+// only) skips the panel check, not quiet or dismissal.
+function pushToast(event, status, force = false) {
+  const toast = { sessionId: event.sessionId, name: event.name, kind: event.kind };
+  if (force) toast.force = true;
+  if (!toastAllowed(toast, toastState())) return;
   if (!dismissals.visible(event.sessionId, status)) return;
-  toastQueue.push({ sessionId: event.sessionId, name: event.name, kind: event.kind });
+  toastQueue.push(toast);
+}
+
+// The panel is on screen and open: session toasts showing or queued go, as
+// the cards say the same. Notices and the forced demo toast stay.
+function clearToastsIfPanelSeen() {
+  const s = toastState();
+  if (s.hidden || s.collapsed || !s.windowVisible) return;
+  toastQueue.retain(keepsWhilePanelSeen);
+  if (shownToast && !keepsWhilePanelSeen(shownToast)) closeToast();
 }
 
 function notifyEvents(kept) {
@@ -429,6 +452,7 @@ function closeToast() {
     toastWin.destroy();
   }
   toastWin = null;
+  shownToast = null;
 }
 
 // Shows one toast in a window that never takes focus: focusable false,
@@ -436,9 +460,9 @@ function closeToast() {
 // line of app status in the name slot, with no session behind it.
 function showToast(toast) {
   closeToast();
-  // A toast may wait in the queue; re-check quiet and dismissal at show time.
-  // A session that is gone from the last read is skipped too.
-  if (visibility.isQuiet()) return;
+  // A toast may wait in the queue; re-check quiet, the panel and dismissal
+  // at show time. A session that is gone from the last read is skipped too.
+  if (!toastAllowed(toast, toastState())) return;
   if (toast.kind !== 'notice') {
     if (!lastStatus.has(toast.sessionId)) return;
     if (!dismissals.visible(toast.sessionId, lastStatus.get(toast.sessionId))) return;
@@ -464,6 +488,7 @@ function showToast(toast) {
     },
   });
   toastWin = w;
+  shownToast = toast;
   // Click-through: clicks reach whatever is underneath, e.g. a player's
   // controls. Mouse moves are forwarded so the renderer sees the pointer
   // enter the close cross and makes only then the window clickable.
@@ -525,6 +550,7 @@ function updateVisibility(count) {
   } else if (!win.isVisible()) {
     win.showInactive();
   }
+  clearToastsIfPanelSeen();
 }
 
 function persistSettings() {
@@ -606,6 +632,7 @@ function applyCollapsed() {
   applyWindowWidth();
   sendUiState();
   rebuildTrayMenu();
+  clearToastsIfPanelSeen();
 }
 
 // The user's own collapse or expand (collapse button, pill, tray): it is
@@ -660,12 +687,6 @@ function refresh() {
 function refreshUnsafe() {
   const { kept, snapshot } = buildSnapshot();
   lastSnapshot = snapshot;
-  try {
-    notifyEvents(kept);
-  } catch (err) {
-    // A toast failure must not skip this refresh's panel update.
-    console.error(`[huddle] toast events failed: ${err && err.stack ? err.stack : err}`);
-  }
   const count = lastSnapshot.sessions.length;
   if (count !== lastCount) {
     console.log(`[huddle] visible sessions: ${count}`);
@@ -675,6 +696,14 @@ function refreshUnsafe() {
     win.webContents.send('huddle:snapshot', lastSnapshot);
   }
   updateVisibility(count);
+  // After the window was shown or hidden: the toast gate asks whether the
+  // panel is on screen, and a panel that just appeared shows the card itself.
+  try {
+    notifyEvents(kept);
+  } catch (err) {
+    // A toast failure is logged; the panel was already updated.
+    console.error(`[huddle] toast events failed: ${err && err.stack ? err.stack : err}`);
+  }
 }
 
 // Trailing throttle: the first event starts the timer and later events in
@@ -805,11 +834,12 @@ function onPanelResponsive() {
 }
 
 // Demo only: one fake 'waiting' toast for the demo waiting session, through
-// the same quiet and dismissal checks as real events.
+// the same quiet and dismissal checks as real events. It is forced past the
+// panel check so its look can be checked with the panel open.
 function pushDemoToast() {
   if (!DEMO_TOAST) return;
   const s = demoSessions().find((d) => d.status === 'waiting');
-  if (s) pushToast({ sessionId: s.sessionId, name: s.name, kind: 'waiting' }, s.status);
+  if (s) pushToast({ sessionId: s.sessionId, name: s.name, kind: 'waiting' }, s.status, true);
 }
 
 // Demo only: expand the waiting buddy, wait for the resize, save a PNG, quit.

@@ -105,3 +105,55 @@ test('initial state is taken from the argument', () => {
   assert.equal(v.isQuiet(), true);
   assert.equal(v.isHidden(), false);
 });
+
+const { shouldToast, toastAllowed, keepsWhilePanelSeen } = require('../src/main/visibility');
+
+const seen = { quiet: false, hidden: false, collapsed: false, windowVisible: true };
+
+test('shouldToast: hidden panel shows a toast', () => {
+  assert.equal(shouldToast({ ...seen, hidden: true, windowVisible: false }), true);
+});
+
+test('shouldToast: collapsed pill shows a toast', () => {
+  assert.equal(shouldToast({ ...seen, collapsed: true }), true);
+});
+
+test('shouldToast: open panel on screen shows none (the card says it)', () => {
+  assert.equal(shouldToast(seen), false);
+});
+
+test('shouldToast: window not on screen shows a toast', () => {
+  assert.equal(shouldToast({ ...seen, windowVisible: false }), true);
+});
+
+test('shouldToast: quiet never shows one', () => {
+  for (const hidden of [false, true]) {
+    for (const collapsed of [false, true]) {
+      for (const windowVisible of [false, true]) {
+        assert.equal(shouldToast({ quiet: true, hidden, collapsed, windowVisible }), false);
+      }
+    }
+  }
+});
+
+test('toastAllowed: a toast queued while collapsed is refused at show time once the panel is open', () => {
+  const toast = { sessionId: 'a', kind: 'waiting' };
+  assert.equal(toastAllowed(toast, { ...seen, collapsed: true }), true);
+  assert.equal(toastAllowed(toast, seen), false);
+});
+
+test('toastAllowed: notices and the forced demo toast pass the panel check, never quiet', () => {
+  const notice = { sessionId: null, kind: 'notice' };
+  const demo = { sessionId: 'd', kind: 'waiting', force: true };
+  assert.equal(toastAllowed(notice, seen), true);
+  assert.equal(toastAllowed(demo, seen), true);
+  assert.equal(toastAllowed(notice, { ...seen, quiet: true }), false);
+  assert.equal(toastAllowed(demo, { ...seen, quiet: true }), false);
+});
+
+test('keepsWhilePanelSeen: only notices and forced toasts', () => {
+  assert.equal(keepsWhilePanelSeen({ kind: 'notice' }), true);
+  assert.equal(keepsWhilePanelSeen({ kind: 'finished', force: true }), true);
+  assert.equal(keepsWhilePanelSeen({ kind: 'finished' }), false);
+  assert.equal(keepsWhilePanelSeen(null), false);
+});
