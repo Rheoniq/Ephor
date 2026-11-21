@@ -17,6 +17,12 @@ const HOST = '127.0.0.1';
 const HOOK_PATH = '/hook';
 const DEFAULT_HOLD_MS = 15000;
 const DEFAULT_MAX_BODY = 64 * 1024;
+// Node's limits for receiving a request (they end only the receiving, not a
+// held response) and for open connections. A connection past the limit is
+// closed at once, which the hook treats as no decision.
+const REQUEST_TIMEOUT_MS = 30000;
+const HEADERS_TIMEOUT_MS = 10000;
+const MAX_CONNECTIONS = 32;
 // How long stop() waits for open connections before cutting them.
 const STOP_GRACE_MS = 1000;
 // Bounds for reading and dropping the rest of an oversized body (see
@@ -87,6 +93,12 @@ function createHookServer(options) {
   const holdMs = Math.min(positive(options.holdMs, DEFAULT_HOLD_MS), MAX_TIMER_MS);
   const maxBody = positive(options.maxBody, DEFAULT_MAX_BODY);
   const drainMax = Math.max(DRAIN_MAX, maxBody);
+  // Node refuses a headers timeout above the request timeout.
+  const requestTimeout = Math.min(positive(options.requestTimeout, REQUEST_TIMEOUT_MS), MAX_TIMER_MS);
+  const headersTimeout = Math.min(positive(options.headersTimeout, HEADERS_TIMEOUT_MS), requestTimeout);
+  const maxConnections = Math.floor(positive(options.maxConnections, MAX_CONNECTIONS));
+  // How often Node checks those timeouts; only tests shorten it.
+  const checkEvery = positive(options.connectionsCheckingInterval, 0);
 
   const pending = new Map(); // id -> { id, sessionId, res, timer }
   const bySession = new Map(); // buddy sessionId -> id
@@ -121,7 +133,7 @@ function createHookServer(options) {
     return true;
   }
 
-  function hold(res, parsed, eventName) {
+  function hold(res, parsed) {
     if (stopped || !canHold()) return fallThrough(res);
     // The prompt belongs to the buddy findBuddy names, which can differ from
     // the hook's own session_id when it matched by transcript path.
@@ -142,7 +154,7 @@ function createHookServer(options) {
       if (take(id)) notifyCancel(id);
     });
     try {
-      onPrompt({ id, sessionId, parsed, eventName });
+      onPrompt({ id, sessionId, parsed });
     } catch {
       cancel(id);
     }
@@ -158,62 +170,79 @@ function createHookServer(options) {
     }
     const parsed = parseHook(body);
     if (!parsed) return fallThrough(res);
-    return hold(res, parsed, body.hook_event_name);
+    return hold(res, parsed);
   }
 
-  // A body over maxBody is never buffered. Its rest is read and dropped, up
-  // to drainMax bytes or DRAIN_MS, before the 413 goes out and the
-  // connection is destroyed: a socket closed with unread input is reset, and
-  // the client then loses the 413 (seen on Windows). Past either bound the
-  // connection is cut at once.
+  // A body over maxBody is never buffered: Huddle cannot show such a prompt,
+  // so it gets no decision (204). Its rest is read and dropped first, up to
+  // drainMax bytes or DRAIN_MS, because a socket closed with unread input is
+  // reset and the client then loses the response (seen on Windows). Past
+  // either bound, or for a declared length above drainMax, the connection is
+  // cut at once: a 204 is sent when it still can be and the socket is
+  // destroyed, so the client sees the 204 or a reset. Both are non-blocking.
   function readBody(req, res) {
     const chunks = [];
     let size = 0;
     let over = false;
-    let rejected = false;
+    let done = false;
     let drainTimer = null;
 
-    function reject413() {
-      if (rejected) return;
-      rejected = true;
+    function cut() {
+      if (done) return;
+      done = true;
       clearTimeout(drainTimer);
       const destroy = () => req.socket && req.socket.destroy();
-      if (send(res, 413)) res.once('finish', destroy);
+      if (fallThrough(res)) res.once('finish', destroy);
       else destroy();
     }
 
     function goOver() {
       over = true;
       chunks.length = 0;
-      drainTimer = setTimeout(() => guard(res, reject413), DRAIN_MS);
+      drainTimer = setTimeout(() => guard(res, cut), DRAIN_MS);
       res.once('close', () => clearTimeout(drainTimer));
     }
 
     const declared = Number(req.headers['content-length']);
-    if (declared > drainMax) return reject413();
+    if (declared > drainMax) return cut();
     if (declared > maxBody) goOver();
 
     req.on('data', (chunk) => {
-      if (rejected) return;
+      if (done) return;
       size += chunk.length;
       if (!over && size > maxBody) guard(res, goOver);
       if (over) {
-        if (size > drainMax) guard(res, reject413);
+        if (size > drainMax) guard(res, cut);
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
-      if (over) guard(res, reject413);
+      if (done) return;
+      done = true;
+      clearTimeout(drainTimer);
+      // Fully drained: the response is still possible, with no decision.
+      if (over) guard(res, () => fallThrough(res));
       else guard(res, () => answer(res, Buffer.concat(chunks, size)));
     });
     return true;
+  }
+
+  // Only Claude Code's own hook client may talk to the server: a browser
+  // page sends an Origin header, and a DNS-rebinding page a foreign Host.
+  function fromHookClient(req) {
+    if (req.headers.origin !== undefined) return false;
+    const addr = server.address();
+    if (!addr || typeof addr !== 'object') return false;
+    return req.headers.host === `${HOST}:${addr.port}`;
   }
 
   function handle(req, res) {
     // A client that aborts mid-body raises 'error'; it must not crash the app.
     req.on('error', noop);
     res.on('error', noop);
+    // Checked before anything else and before the body is read.
+    if (!fromHookClient(req)) return send(res, 403);
     const path = String(req.url || '').split('?')[0];
     if (path !== HOOK_PATH) return send(res, 404);
     if (req.method !== 'POST') return send(res, 405, '', { Allow: 'POST' });
@@ -221,7 +250,10 @@ function createHookServer(options) {
     return readBody(req, res);
   }
 
-  const server = http.createServer((req, res) => guard(res, () => handle(req, res)));
+  const serverOptions = { requestTimeout, headersTimeout };
+  if (checkEvery > 0) serverOptions.connectionsCheckingInterval = checkEvery;
+  const server = http.createServer(serverOptions, (req, res) => guard(res, () => handle(req, res)));
+  server.maxConnections = maxConnections;
   // An 'error' after listening (an accept failure) must not crash the app.
   server.on('error', noop);
 
@@ -313,15 +345,11 @@ function createHookServer(options) {
     if (id !== undefined) cancel(id);
   }
 
-  function pendingFor(sessionId) {
-    return bySession.get(sessionId) ?? null;
-  }
-
   function address() {
     return server.listening ? server.address() : null;
   }
 
-  return { start, stop, resolve, cancelSession, pendingFor, address };
+  return { start, stop, resolve, cancelSession, address };
 }
 
-module.exports = { createHookServer };
+module.exports = { createHookServer, REQUEST_TIMEOUT_MS, HEADERS_TIMEOUT_MS, MAX_CONNECTIONS };
