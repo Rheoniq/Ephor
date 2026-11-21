@@ -1,11 +1,12 @@
 'use strict';
 
-const { parseDragDelta } = require('./drag');
+const { parseDragDelta } = require('../renderer/drag');
 
-// Close controls: the panel's Hide and Quit buttons and the toast's close
-// cross; and the collapsed pill's drag messages. Each IPC message counts only from its own window; anything else,
-// and any value that is not the expected type, is ignored. An action that
-// throws (for example on a window destroyed meanwhile) is logged, not thrown.
+// Panel controls: the Hide and Quit buttons, the toast's close cross and the
+// collapsed pill's drag messages. Each IPC message counts only from its own
+// window; anything else, and any value that is not the expected type, is
+// ignored. An action that throws (for example on a window destroyed
+// meanwhile) is logged, not thrown.
 
 function createControls({
   isPanelSender,

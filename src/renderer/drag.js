@@ -69,11 +69,22 @@
     };
   }
 
+  // The window position nearest to bounds that puts the whole window inside
+  // workArea. A window larger than the work area is pinned to its top-left.
+  function fitInside(bounds, workArea) {
+    const fit = (pos, size, start, span) => Math.max(start, Math.min(pos, start + span - size));
+    return {
+      x: fit(bounds.x, bounds.width, workArea.x, workArea.width),
+      y: fit(bounds.y, bounds.height, workArea.y, workArea.height),
+    };
+  }
+
   // Main side: the window origin is taken at start() (or on the first to()
-  // of a drag), and each to({ dx, dy }) puts the window at origin plus the
-  // offset with its current size, clamped to the work area that
-  // workAreaFor(rect) returns for the target rectangle.
-  function createWindowDrag({ getBounds, setBounds, workAreaFor }) {
+  // of a drag), and each to({ dx, dy }) moves the window to origin plus the
+  // offset, clamped to the work area that workAreaFor(rect) returns for the
+  // target rectangle. Only the position is set, so size rounding across
+  // displays with different scale factors cannot build up during a drag.
+  function createWindowDrag({ getBounds, setPosition, workAreaFor }) {
     let origin = null;
 
     function start() {
@@ -94,7 +105,7 @@
       };
       const { x, y } = clampToWorkArea(target, workAreaFor(target));
       if (x === b.x && y === b.y) return;
-      setBounds({ x, y, width: b.width, height: b.height });
+      setPosition(x, y);
     }
 
     function end() {
@@ -108,6 +119,7 @@
     createDragTracker,
     parseDragDelta,
     clampToWorkArea,
+    fitInside,
     createWindowDrag,
     DEFAULT_THRESHOLD,
     MAX_DELTA,

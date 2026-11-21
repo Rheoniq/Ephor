@@ -46,7 +46,7 @@ const {
 } = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
 const { createControls, hideTitle } = require('./controls');
-const { createWindowDrag } = require('./drag');
+const { createWindowDrag, fitInside } = require('../renderer/drag');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -348,11 +348,15 @@ function notifyEvents(kept) {
   for (const event of detector.detect(kept)) pushToast(event, statusById.get(event.sessionId));
 }
 
+// Below the panel, on the display the panel is on (the pill may have been
+// dragged to another monitor); the primary display when the panel is hidden.
 function toastBounds() {
-  const { workArea } = screen.getPrimaryDisplay();
+  const panelShown = win && !win.isDestroyed() && win.isVisible();
+  const display = panelShown ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
+  const { workArea } = display;
   let right = workArea.x + workArea.width - MARGIN;
   let top = workArea.y + MARGIN;
-  if (win && !win.isDestroyed() && win.isVisible()) {
+  if (panelShown) {
     const b = win.getBounds();
     right = b.x + b.width;
     top = b.y + b.height + TOAST_GAP;
@@ -474,13 +478,22 @@ function windowWidth() {
   return visibility.isCollapsed() ? PILL_WIDTH : WIN_WIDTH;
 }
 
+// The rect moved so all of it lies inside the work area of its display.
+function fitOnDisplay(rect) {
+  const { x, y } = fitInside(rect, screen.getDisplayMatching(rect).workArea);
+  return { ...rect, x, y };
+}
+
 // Resizes to the width for the current state, keeping the right edge and top.
+// Growing (expanding from the pill) also fits the panel inside its display's
+// work area, so a pill parked near an edge does not open off screen.
 function applyWindowWidth() {
   if (!win || win.isDestroyed()) return;
   const b = win.getBounds();
   const width = windowWidth();
   if (b.width === width) return;
-  win.setBounds({ x: b.x + b.width - width, y: b.y, width, height: b.height });
+  const target = { x: b.x + b.width - width, y: b.y, width, height: b.height };
+  win.setBounds(width > b.width ? fitOnDisplay(target) : target);
 }
 
 function setCollapsed(collapsed) {
@@ -726,7 +739,7 @@ function fromOurWindow(event) {
 // Every resize elsewhere reads win.getBounds(), so a dragged position stays.
 const pillDrag = createWindowDrag({
   getBounds: () => win.getBounds(),
-  setBounds: (b) => win.setBounds(b),
+  setPosition: (x, y) => win.setPosition(x, y),
   workAreaFor: (rect) => screen.getDisplayMatching(rect).workArea,
 });
 
@@ -767,8 +780,12 @@ ipcMain.on('huddle:content-size', (event, height) => {
   const b = win.getBounds();
   const width = windowWidth();
   if (b.height === h && b.width === width) return;
-  // Keep the right edge and top so the panel stays anchored top-right.
-  win.setBounds({ x: b.x + b.width - width, y: b.y, width, height: h });
+  // Keep the right edge and top so the panel stays anchored top-right. An
+  // expanded panel that grows is fitted inside its display's work area; the
+  // pill is left where it was dragged (it may stick out, see drag.js).
+  const target = { x: b.x + b.width - width, y: b.y, width, height: h };
+  const grows = h > b.height || width > b.width;
+  win.setBounds(grows && !visibility.isCollapsed() ? fitOnDisplay(target) : target);
 });
 
 ipcMain.on('huddle:dismiss', (event, sessionId) => {

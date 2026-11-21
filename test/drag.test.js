@@ -7,9 +7,37 @@ const {
   parseDragDelta,
   clampToWorkArea,
   createWindowDrag,
+  fitInside,
   DEFAULT_THRESHOLD,
   MIN_VISIBLE,
-} = require('../src/main/drag');
+} = require('../src/renderer/drag');
+
+test('fitInside leaves a rect already inside the work area unchanged', () => {
+  const wa = { x: 0, y: 0, width: 1920, height: 1040 };
+  assert.deepEqual(fitInside({ x: 100, y: 50, width: 360, height: 400 }, wa), { x: 100, y: 50 });
+});
+
+test('fitInside pulls a panel off the left and top edges inside', () => {
+  const wa = { x: 0, y: 0, width: 1920, height: 1040 };
+  assert.deepEqual(fitInside({ x: -200, y: -30, width: 360, height: 400 }, wa), { x: 0, y: 0 });
+});
+
+test('fitInside pulls a panel off the right and bottom edges inside', () => {
+  const wa = { x: 0, y: 0, width: 1920, height: 1040 };
+  assert.deepEqual(fitInside({ x: 1700, y: 900, width: 360, height: 400 }, wa), { x: 1560, y: 640 });
+});
+
+test('fitInside works on a monitor at negative coordinates', () => {
+  const wa = { x: -2560, y: -200, width: 2560, height: 1400 };
+  assert.deepEqual(fitInside({ x: -2700, y: -300, width: 360, height: 400 }, wa), { x: -2560, y: -200 });
+  assert.deepEqual(fitInside({ x: -100, y: 1000, width: 360, height: 400 }, wa), { x: -360, y: 800 });
+});
+
+test('fitInside pins a panel larger than the work area to its top-left', () => {
+  const wa = { x: 100, y: 50, width: 300, height: 200 };
+  assert.deepEqual(fitInside({ x: 400, y: 300, width: 360, height: 400 }, wa), { x: 100, y: 50 });
+  assert.deepEqual(fitInside({ x: -50, y: -50, width: 360, height: 400 }, wa), { x: 100, y: 50 });
+});
 
 test('the default threshold is 4 px and 24 px must stay visible', () => {
   assert.equal(DEFAULT_THRESHOLD, 4);
@@ -114,9 +142,9 @@ function fakeWindow(start) {
   const sets = [];
   return {
     getBounds: () => ({ ...bounds }),
-    setBounds: (b) => {
-      sets.push(b);
-      bounds = { ...b };
+    setPosition: (x, y) => {
+      sets.push({ x, y });
+      bounds = { ...bounds, x, y };
     },
     resize: (b) => {
       bounds = { ...bounds, ...b };
@@ -127,7 +155,7 @@ function fakeWindow(start) {
 
 test('window drag moves the window to origin plus the offset, keeping its size', () => {
   const w = fakeWindow({ x: 1800, y: 12, width: 96, height: 40 });
-  const d = createWindowDrag({ getBounds: w.getBounds, setBounds: w.setBounds, workAreaFor: () => WA });
+  const d = createWindowDrag({ getBounds: w.getBounds, setPosition: w.setPosition, workAreaFor: () => WA });
   d.start();
   d.to({ dx: -100, dy: 50 });
   d.to({ dx: -300, dy: 80 });
@@ -137,7 +165,7 @@ test('window drag moves the window to origin plus the offset, keeping its size',
 
 test('window drag without start takes the origin on the first move', () => {
   const w = fakeWindow({ x: 500, y: 500, width: 96, height: 40 });
-  const d = createWindowDrag({ getBounds: w.getBounds, setBounds: w.setBounds, workAreaFor: () => WA });
+  const d = createWindowDrag({ getBounds: w.getBounds, setPosition: w.setPosition, workAreaFor: () => WA });
   d.to({ dx: 10, dy: 10 });
   d.to({ dx: 20, dy: 20 });
   assert.deepEqual(w.getBounds(), { x: 520, y: 520, width: 96, height: 40 });
@@ -145,7 +173,7 @@ test('window drag without start takes the origin on the first move', () => {
 
 test('a new drag starts from where the last one left the window', () => {
   const w = fakeWindow({ x: 500, y: 500, width: 96, height: 40 });
-  const d = createWindowDrag({ getBounds: w.getBounds, setBounds: w.setBounds, workAreaFor: () => WA });
+  const d = createWindowDrag({ getBounds: w.getBounds, setPosition: w.setPosition, workAreaFor: () => WA });
   d.start();
   d.to({ dx: 100, dy: 0 });
   d.end();
@@ -159,7 +187,7 @@ test('window drag keeps a size changed mid-drag and clamps to the matching work 
   const asked = [];
   const d = createWindowDrag({
     getBounds: w.getBounds,
-    setBounds: w.setBounds,
+    setPosition: w.setPosition,
     workAreaFor: (rect) => {
       asked.push(rect);
       return WA;
@@ -174,7 +202,7 @@ test('window drag keeps a size changed mid-drag and clamps to the matching work 
 
 test('window drag ignores an invalid offset', () => {
   const w = fakeWindow({ x: 100, y: 100, width: 96, height: 40 });
-  const d = createWindowDrag({ getBounds: w.getBounds, setBounds: w.setBounds, workAreaFor: () => WA });
+  const d = createWindowDrag({ getBounds: w.getBounds, setPosition: w.setPosition, workAreaFor: () => WA });
   d.start();
   d.to({ dx: NaN, dy: 0 });
   d.to(null);

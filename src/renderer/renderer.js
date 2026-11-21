@@ -340,6 +340,11 @@
   });
   pill.addEventListener('pointermove', (e) => {
     if (e.pointerId !== dragPointer) return;
+    // A mouse with no button down: the release was missed, so the press ends.
+    if (e.pointerType === 'mouse' && e.buttons === 0) {
+      endPillDrag();
+      return;
+    }
     const m = dragTracker.move(e.screenX, e.screenY);
     if (!m.dragging) return;
     if (!dragSent) {
