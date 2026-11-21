@@ -1,6 +1,7 @@
 'use strict';
 
-// Toast queue: shows one toast at a time for durationMs, then the next.
+// Toast queue: shows one toast at a time for durationMs (or until skip()),
+// then the next.
 // A toast with the same sessionId and kind as the showing or a queued one is
 // dropped; at most MAX_PENDING wait, the oldest is dropped first.
 
@@ -27,6 +28,13 @@ function createToastQueue({ show, durationMs, setTimer = setTimeout, clearTimer 
       pending.push(toast);
       while (pending.length > MAX_PENDING) pending.shift();
       if (!current) next();
+    },
+    // Ends the showing toast's slot now (closed on its cross): the next one
+    // shows at once with its full time. Does nothing when none shows.
+    skip() {
+      if (!current) return;
+      if (timer !== null) clearTimer(timer);
+      next();
     },
     clear() {
       if (timer !== null) clearTimer(timer);

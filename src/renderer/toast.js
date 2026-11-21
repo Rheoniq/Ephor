@@ -14,4 +14,13 @@
   document.getElementById('toast-name').textContent = name;
   document.getElementById('toast-kind').textContent = kind ? KINDS[kind] : '';
   if (kind) document.getElementById('toast').dataset.kind = kind;
+
+  // The window is click-through except while the pointer is over the cross:
+  // main forwards mouse moves, so enter and leave still fire here.
+  const close = document.getElementById('toast-close');
+  if (window.toast) {
+    close.addEventListener('mouseenter', () => window.toast.setClickable(true));
+    close.addEventListener('mouseleave', () => window.toast.setClickable(false));
+    close.addEventListener('click', () => window.toast.close());
+  }
 })();

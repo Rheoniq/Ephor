@@ -46,6 +46,7 @@ body {
 
 .toast {
   --accent: var(--idle);
+  position: relative;
   margin: 6px;
   height: calc(100% - 12px);
   display: flex;
@@ -65,7 +66,29 @@ body {
 
 .toast[data-kind="finished"] { --accent: var(--busy); }
 
+/* The close cross: the only part of the toast that takes clicks. */
+.toast-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: 15px/1 "Segoe UI", system-ui, sans-serif;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  color: var(--fg);
+  background: var(--border);
+}
+
 .toast-name {
+  padding-right: 20px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;

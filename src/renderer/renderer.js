@@ -17,6 +17,8 @@
   const list = document.getElementById('buddies');
   const count = document.getElementById('count');
   const collapseBtn = document.getElementById('collapse');
+  const hideBtn = document.getElementById('hide');
+  const quitBtn = document.getElementById('quit');
   const pill = document.getElementById('pill');
   const pillCount = document.getElementById('pill-count');
   const pillAlert = document.getElementById('pill-alert');
@@ -301,7 +303,13 @@
     window.huddle.setCollapsed(false);
   });
 
+  // Hide works like the hotkey; Quit ends the app (held prompts go back to
+  // Desktop). Main checks that both come from this window.
+  hideBtn.addEventListener('click', () => window.huddle.hide());
+  quitBtn.addEventListener('click', () => window.huddle.quit());
+
   window.huddle.onUiState((state) => {
+    if (state && typeof state.hideTitle === 'string') hideBtn.title = state.hideTitle;
     const next = !!(state && state.collapsed === true);
     if (next !== collapsed) setCollapsed(next);
   });

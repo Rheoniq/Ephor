@@ -45,6 +45,7 @@ const {
   answerInTime,
 } = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
+const { createControls, hideTitle } = require('./controls');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
@@ -391,14 +392,17 @@ function showToast(toast) {
     focusable: false,
     show: false,
     webPreferences: {
+      preload: path.join(__dirname, 'toast-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
   toastWin = w;
-  // Click-through: clicks reach whatever is underneath, e.g. a player's controls.
-  w.setIgnoreMouseEvents(true);
+  // Click-through: clicks reach whatever is underneath, e.g. a player's
+  // controls. Mouse moves are forwarded so the renderer sees the pointer
+  // enter the close cross and makes only then the window clickable.
+  w.setIgnoreMouseEvents(true, { forward: true });
   w.setAlwaysOnTop(true, 'screen-saver');
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -410,6 +414,26 @@ function showToast(toast) {
   });
   toastTimer = setTimeout(closeToast, TOAST_MS);
   console.log(`[huddle] toast: ${toast.kind} ${toast.sessionId}`);
+}
+
+// The toast's close cross: the toast goes at once and the queue moves on.
+function dismissToast() {
+  closeToast();
+  toastQueue.skip();
+}
+
+// Clickable only while the pointer is over the close cross; elsewhere the
+// toast stays click-through. focusable false keeps it from taking focus.
+function setToastClickable(clickable) {
+  if (!toastWin || toastWin.isDestroyed()) return;
+  if (clickable) toastWin.setIgnoreMouseEvents(false);
+  else toastWin.setIgnoreMouseEvents(true, { forward: true });
+}
+
+// The panel's Hide button: hidden like the hotkey or tray toggle, so held
+// prompts are released and Desktop takes over. Already hidden stays hidden.
+function hidePanel() {
+  if (!visibility.isHidden()) toggleHidden();
 }
 
 function updateVisibility(count) {
@@ -428,7 +452,10 @@ function persistSettings() {
 
 function sendUiState() {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send('huddle:ui-state', { collapsed: visibility.isCollapsed() });
+  win.webContents.send('huddle:ui-state', {
+    collapsed: visibility.isCollapsed(),
+    hideTitle: hideTitle(hotkeyNote ? null : settings.hotkey),
+  });
 }
 
 function rebuildTrayMenu() {
@@ -689,6 +716,21 @@ function createTray() {
 function fromOurWindow(event) {
   return !!win && !win.isDestroyed() && event.sender === win.webContents;
 }
+
+const controls = createControls({
+  isPanelSender: fromOurWindow,
+  isToastSender: (event) => !!toastWin && !toastWin.isDestroyed() && event.sender === toastWin.webContents,
+  hide: hidePanel,
+  // Through app.quit, so before-quit ends held prompts (204) and stops the server.
+  quit: () => app.quit(),
+  closeToast: dismissToast,
+  setToastClickable,
+});
+
+ipcMain.on('huddle:hide', (event) => controls.onHide(event));
+ipcMain.on('huddle:quit', (event) => controls.onQuit(event));
+ipcMain.on('huddle-toast:close', (event) => controls.onToastClose(event));
+ipcMain.on('huddle-toast:clickable', (event, clickable) => controls.onToastClickable(event, clickable));
 
 ipcMain.on('huddle:content-size', (event, height) => {
   if (!fromOurWindow(event)) return;

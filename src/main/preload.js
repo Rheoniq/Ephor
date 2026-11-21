@@ -29,4 +29,11 @@ contextBridge.exposeInMainWorld('huddle', {
   arm(id) {
     ipcRenderer.send('huddle:arm', id);
   },
+  // Header buttons: hide like the hotkey; quit the app.
+  hide() {
+    ipcRenderer.send('huddle:hide');
+  },
+  quit() {
+    ipcRenderer.send('huddle:quit');
+  },
 });
