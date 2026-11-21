@@ -30,10 +30,12 @@ Plain idle sessions are never shown. "Finished" means the session went from busy
 
 A small window says "needs you" when a session starts waiting and "finished" when a busy session goes idle (not when a waiting session goes idle).
 
+- It shows only while you cannot see the panel: hidden (hotkey, tray or Hide button) or collapsed to the pill. With the panel open, the card is the notification; opening the panel clears any toast showing or waiting.
 - It shows for 4 seconds.
 - Its close cross is the only clickable part. The rest lets clicks through and never takes focus.
 - It sits below the panel or pill, or above it when there is no room below. While the panel is hidden, it sits in the top-right corner of the display.
 - Quiet mode silences toasts. Dismissed sessions get none.
+- The one "port in use" notice is not a card, so it shows with the panel open too.
 
 ## Look
 
