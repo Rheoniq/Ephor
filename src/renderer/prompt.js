@@ -47,7 +47,8 @@
       return true;
     }
     if (p.kind === 'permission') {
-      return typeof p.toolName === 'string' && (p.summary === undefined || typeof p.summary === 'string');
+      // Allow is offered only with the whole command on the card.
+      return typeof p.toolName === 'string' && typeof p.command === 'string' && p.command !== '';
     }
     return false;
   }
@@ -208,7 +209,7 @@
         kind: 'permission',
         answered,
         toolName: prompt.toolName,
-        summary: typeof prompt.summary === 'string' ? prompt.summary : '',
+        command: prompt.command,
         armed: confirmPending(),
       };
     }

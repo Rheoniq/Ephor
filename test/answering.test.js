@@ -65,9 +65,27 @@ test('promptView: an ask shows the display questions', () => {
   assert.deepEqual(view, { kind: 'ask', questions: parsed.questions });
 });
 
-test('promptView: a permission shows tool name and summary only', () => {
+test('promptView: a permission shows the tool name and the full command only', () => {
   const view = promptView(permParsed('Bash', { command: 'rm -rf build', secret: 'x' }));
-  assert.deepEqual(view, { kind: 'permission', toolName: 'Bash', summary: 'rm -rf build' });
+  assert.deepEqual(view, { kind: 'permission', toolName: 'Bash', command: 'rm -rf build' });
+  const long = `echo ${'y'.repeat(590)}\nls`;
+  assert.equal(promptView(permParsed('PowerShell', { command: long })).command, long);
+});
+
+test('promptView: a permission the card cannot show in full gives null', () => {
+  const base = { kind: 'permission', sessionId: SESSION, transcriptPath: '', cwd: '' };
+  const cases = {
+    'another tool': { ...base, toolName: 'Write', command: 'x' },
+    'no command': { ...base, toolName: 'Bash' },
+    'blank command': { ...base, toolName: 'Bash', command: '  ' },
+    'command too long': { ...base, toolName: 'Bash', command: 'x'.repeat(601) },
+    'hidden characters': { ...base, toolName: 'Bash', command: 'echo a\u202eb' },
+  };
+  for (const [name, parsed] of Object.entries(cases)) {
+    assert.equal(promptView(parsed), null, name);
+  }
+  // Tools other than Bash and PowerShell never reach a card.
+  assert.equal(permParsed('Write', { file_path: 'C:\\a.txt', content: 'x' }), null);
 });
 
 test('promptView: an ask Huddle cannot answer in full gives null', () => {
@@ -113,7 +131,7 @@ test('buildResponse: answers keyed by raw question text with raw labels', () => 
   const raw = [q('Which db?', ['Pg', 'Lite']), q('Which port?', ['80', '8080'])];
   const parsed = askParsed(raw);
   const r = buildResponse(parsed, sent({ 'Which db?': 'Lite', 'Which port?': '80' }));
-  assert.deepEqual(r, askResponse(raw, { 'Which db?': 'Lite', 'Which port?': '80' }, 'PreToolUse'));
+  assert.deepEqual(r, askResponse(raw, { 'Which db?': 'Lite', 'Which port?': '80' }));
   assert.equal(r.hookSpecificOutput.hookEventName, 'PreToolUse');
   assert.equal(r.hookSpecificOutput.updatedInput.questions, parsed.rawQuestions);
 });

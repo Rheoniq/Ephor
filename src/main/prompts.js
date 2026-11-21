@@ -8,10 +8,28 @@
 const MAX_QUESTIONS = 4;
 const MAX_OPTIONS = 4;
 const MAX_TEXT = 300;
-const MAX_SUMMARY = 160;
+
+// Permission prompts are held only for shell commands the card can show in
+// full: Bash or PowerShell with a command of at most MAX_COMMAND characters.
+// Every other tool, and any longer command, falls through to Desktop at once.
+const PERMISSION_TOOLS = new Set(['Bash', 'PowerShell']);
+const MAX_COMMAND = 600;
+// Characters that would make the shown command differ from the one that
+// runs: control characters other than tab, line feed and a carriage return
+// that starts a CRLF pair; invisible format characters (bidi overrides,
+// zero-width marks); and the Unicode line and paragraph separators, which
+// show as a line break but do not run as one.
+const HIDDEN_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]|\r(?!\n)|\p{Cf}/u;
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// The command when the card can show all of it as it runs, else null.
+function showableCommand(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  if (value.length > MAX_COMMAND || HIDDEN_CHARS.test(value)) return null;
+  return value;
 }
 
 // Cuts to at most `max` UTF-16 units without leaving half a surrogate pair.
@@ -24,32 +42,18 @@ function truncate(value, max) {
   return cut;
 }
 
-function oneLine(value, max) {
-  return truncate(String(value).replace(/\s+/g, ' ').trim(), max);
-}
-
+// The card shows the question, its option labels and their descriptions.
 function displayQuestion(raw) {
   const item = isObject(raw) ? raw : {};
   const options = Array.isArray(item.options) ? item.options : [];
   return {
     question: truncate(item.question, MAX_TEXT),
-    header: truncate(item.header, MAX_TEXT),
     options: options.slice(0, MAX_OPTIONS).map((opt) => {
       const o = isObject(opt) ? opt : {};
       return { label: truncate(o.label, MAX_TEXT), description: truncate(o.description, MAX_TEXT) };
     }),
     multiSelect: item.multiSelect === true,
   };
-}
-
-function summarize(toolName, toolInput) {
-  const input = isObject(toolInput) ? toolInput : {};
-  for (const key of ['command', 'file_path', 'url']) {
-    if (typeof input[key] === 'string' && input[key].trim() !== '') {
-      return oneLine(input[key], MAX_SUMMARY);
-    }
-  }
-  return oneLine(toolName, MAX_SUMMARY);
 }
 
 function parseHook(body) {
@@ -77,31 +81,22 @@ function parseHook(body) {
     };
   }
 
-  // A PermissionRequest for AskUserQuestion only arrives when nothing answered
-  // it at PreToolUse, so Huddle does not hold it a second time.
-  if (event === 'PermissionRequest' && toolName !== 'AskUserQuestion') {
-    return {
-      kind: 'permission',
-      ...base,
-      toolName: truncate(toolName, MAX_TEXT),
-      summary: summarize(toolName, body.tool_input),
-      risky: true,
-    };
+  // Only a shell command shown in full is held. A PermissionRequest for
+  // AskUserQuestion (it arrives only when nothing answered it at PreToolUse)
+  // and every other tool fall through to Desktop.
+  if (event === 'PermissionRequest' && PERMISSION_TOOLS.has(toolName)) {
+    const input = isObject(body.tool_input) ? body.tool_input : {};
+    const command = showableCommand(input.command);
+    if (command === null) return null;
+    return { kind: 'permission', ...base, toolName, command };
   }
 
   return null;
 }
 
-function askResponse(rawQuestions, answers, eventName = 'PreToolUse') {
+// Questions are answered at PreToolUse only (docs/superpowers/notes/hook-gate.md).
+function askResponse(rawQuestions, answers) {
   const updatedInput = { questions: rawQuestions, answers: { ...answers } };
-  if (eventName === 'PermissionRequest') {
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PermissionRequest',
-        decision: { behavior: 'allow', updatedInput },
-      },
-    };
-  }
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
@@ -126,4 +121,12 @@ function joinMulti(labels) {
   return labels.join(', ');
 }
 
-module.exports = { parseHook, askResponse, permissionResponse, joinMulti };
+module.exports = {
+  parseHook,
+  askResponse,
+  permissionResponse,
+  joinMulti,
+  showableCommand,
+  PERMISSION_TOOLS,
+  MAX_COMMAND,
+};

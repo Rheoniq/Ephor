@@ -316,7 +316,7 @@ button:focus-visible {
 
 .prompt-text,
 .prompt-tool,
-.prompt-summary {
+.prompt-command {
   margin: 0 0 8px;
 }
 
@@ -331,12 +331,15 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* One line; the full summary is in the title. */
-.prompt-summary {
+/* The whole command, wrapped and never cut: Allow is offered only for what
+   is shown. A long command scrolls inside the box. */
+.prompt-command {
   margin-bottom: 10px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  max-height: 200px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font: 12px/1.35 var(--mono);
   color: var(--muted);
 }

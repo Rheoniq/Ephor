@@ -18,7 +18,7 @@ function ask(id, questions) {
 }
 
 function permission(id) {
-  return { id, kind: 'permission', toolName: 'Bash', summary: 'npm test' };
+  return { id, kind: 'permission', toolName: 'Bash', command: 'npm test' };
 }
 
 // A state on a fake clock. `settle()` moves past the minimum card age, as a
@@ -184,7 +184,10 @@ test('a malformed prompt is not shown', () => {
     { id: 'p', kind: 'ask', questions: [question('', ['A'])] },
     { id: 'p', kind: 'ask', questions: [question('Same?', ['A']), question('Same?', ['B'])] },
     { id: 'p', kind: 'ask', questions: [question('Q?', ['A', 'A'])] },
-    { id: 'p', kind: 'permission', toolName: 7 },
+    { id: 'p', kind: 'permission', toolName: 7, command: 'ls' },
+    { id: 'p', kind: 'permission', toolName: 'Bash' },
+    { id: 'p', kind: 'permission', toolName: 'Bash', command: '' },
+    { id: 'p', kind: 'permission', toolName: 'Bash', command: ['ls'] },
   ]) {
     assert.equal(st.show(bad), false);
     assert.equal(st.current(), null);
@@ -197,6 +200,7 @@ test('armAllow needs two calls for a permission prompt', () => {
   settle();
   assert.equal(st.confirmPending(), false);
   assert.equal(st.current().armed, false);
+  assert.equal(st.current().command, 'npm test', 'the full command is shown');
   assert.equal(st.armAllow(), 'armed');
   assert.equal(st.confirmPending(), true);
   assert.equal(st.current().armed, true);

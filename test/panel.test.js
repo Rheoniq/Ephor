@@ -61,7 +61,7 @@ test('toSnapshotSession sets finished as a boolean', () => {
 
 test('toSnapshotSession adds a prompt only when one is given', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'waiting', cwd: 'C:\\x' };
-  const prompt = { id: 'p1', kind: 'permission', toolName: 'Bash', summary: 'npm test' };
+  const prompt = { id: 'p1', kind: 'permission', toolName: 'Bash', command: 'npm test' };
   assert.deepEqual(toSnapshotSession(s, [], prompt), {
     sessionId: 'a',
     hostSessionId: 'local_a',

@@ -7,7 +7,7 @@
 // response is built from the raw hook input by index.
 
 const path = require('node:path');
-const { askResponse, permissionResponse, joinMulti } = require('./prompts');
+const { askResponse, permissionResponse, joinMulti, showableCommand, PERMISSION_TOOLS } = require('./prompts');
 const { transcriptPath } = require('./paths');
 
 // The card shows at most this many questions and options (as prompts.js
@@ -60,18 +60,16 @@ function askAnswerable(parsed) {
 }
 
 // What the renderer shows for a parsed hook, or null when the panel cannot
-// answer it in full (the hook then falls through at once).
+// answer it in full (the hook then falls through at once). A permission is
+// shown only for Bash or PowerShell, with the whole command (prompts.js).
 function promptView(parsed) {
   if (!isObject(parsed)) return null;
   if (parsed.kind === 'ask') {
     return askAnswerable(parsed) ? { kind: 'ask', questions: parsed.questions } : null;
   }
-  if (parsed.kind === 'permission' && nonEmpty(parsed.toolName)) {
-    return {
-      kind: 'permission',
-      toolName: parsed.toolName,
-      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-    };
+  if (parsed.kind === 'permission' && PERMISSION_TOOLS.has(parsed.toolName)) {
+    const command = showableCommand(parsed.command);
+    return command === null ? null : { kind: 'permission', toolName: parsed.toolName, command };
   }
   return null;
 }
@@ -118,12 +116,12 @@ function askAnswers(parsed, sent) {
 function buildResponse(parsed, payload) {
   if (!isObject(parsed) || !isObject(payload) || payload.kind !== parsed.kind) return null;
   if (parsed.kind === 'permission') {
+    if (!promptView(parsed)) return null;
     return typeof payload.allow === 'boolean' ? permissionResponse(payload.allow) : null;
   }
   if (parsed.kind !== 'ask' || !askAnswerable(parsed)) return null;
   const answers = askAnswers(parsed, payload.answers);
-  // Questions are answered at PreToolUse only.
-  return answers ? askResponse(parsed.rawQuestions, answers, 'PreToolUse') : null;
+  return answers ? askResponse(parsed.rawQuestions, answers) : null;
 }
 
 // Windows paths compare without case and without a trailing separator.

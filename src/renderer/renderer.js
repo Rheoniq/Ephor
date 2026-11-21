@@ -109,11 +109,12 @@
   }
 
   // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
-  // Deny is one click.
+  // Deny is one click. The whole command is shown, wrapped; a long one
+  // scrolls inside its box (render keeps the scroll position).
   function renderPermission(st, view) {
     const card = el('div', 'prompt permission');
-    const summary = el('p', 'prompt-summary', str(view.summary));
-    summary.title = str(view.summary);
+    const command = el('pre', 'prompt-command', str(view.command));
+    command.dataset.promptId = view.id;
     const allow = promptButton(view.armed ? 'Confirm allow' : 'Allow', 'allow', view.armed ? 'allow armed' : 'allow');
     allow.addEventListener('click', () => {
       const wasArmed = st.confirmPending();
@@ -133,7 +134,7 @@
     });
     const options = el('div', 'prompt-options');
     options.append(allow, deny);
-    card.append(el('p', 'prompt-tool', str(view.toolName)), summary, options);
+    card.append(el('p', 'prompt-tool', str(view.toolName)), command, options);
     return card;
   }
 
@@ -247,8 +248,16 @@
       return;
     }
 
+    // A snapshot for another session must not scroll a command box back.
+    const scrolled = new Map();
+    for (const box of list.querySelectorAll('.prompt-command')) {
+      if (box.scrollTop > 0) scrolled.set(box.dataset.promptId, box.scrollTop);
+    }
     list.replaceChildren(...sessions.map(renderBuddy));
     if (sessions.length === 0) list.append(el('li', 'empty', 'No sessions'));
+    for (const box of list.querySelectorAll('.prompt-command')) {
+      if (scrolled.has(box.dataset.promptId)) box.scrollTop = scrolled.get(box.dataset.promptId);
+    }
 
     if (focusId !== null && focusRole) {
       for (const li of list.children) {
