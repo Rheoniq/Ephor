@@ -31,6 +31,7 @@ const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
 const { createVisibility } = require('./visibility');
+const { createRendererHealth } = require('./health');
 const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
 const { createHookServer } = require('./hooks');
@@ -50,12 +51,16 @@ const { createWindowDrag, createPanelAnchor, placeNear } = require('../renderer/
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
 // HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
-// HUDDLE_DEMO_SHOT=<file.png> saves a screenshot after render and quits (demo only).
-// HUDDLE_DEMO_TOAST=1 pushes one fake toast 1 s after load (demo only).
+// HUDDLE_DEMO_SHOT=<file.png> saves a screenshot after render and quits
+// (demo only, never in a packaged build: it runs script in the page and
+// writes a file).
+// HUDDLE_DEMO_TOAST=1 pushes one fake toast 1 s after load (demo only,
+// never in a packaged build).
 const DEMO = process.env.HUDDLE_DEMO === '1';
+const DEMO_FROM_SOURCE = DEMO && !app.isPackaged;
 const DEMO_THEME = DEMO ? process.env.HUDDLE_DEMO_THEME : undefined;
-const DEMO_SHOT = DEMO ? process.env.HUDDLE_DEMO_SHOT : undefined;
-const DEMO_TOAST = DEMO && process.env.HUDDLE_DEMO_TOAST === '1';
+const DEMO_SHOT = DEMO_FROM_SOURCE ? process.env.HUDDLE_DEMO_SHOT : undefined;
+const DEMO_TOAST = DEMO_FROM_SOURCE && process.env.HUDDLE_DEMO_TOAST === '1';
 
 const HOME = os.homedir();
 const SESSIONS_DIR = path.join(HOME, '.claude', 'sessions');
@@ -86,6 +91,9 @@ const HOOK_PORT = 47821;
 const HOLD_MS = 15000;
 const TOKEN_FILE = 'hook-token';
 const MAX_PROMPT_ID_LEN = 100;
+// While the port is taken (or the server failed to start), listening is
+// tried again this often until it works or the app quits.
+const ANSWER_RETRY_MS = 30000;
 
 const dismissals = createDismissals();
 const finished = createFinished();
@@ -118,10 +126,16 @@ let hotkeyNote = null; // set when the global hotkey could not be registered
 // `heldAt` and `armedAt` are performance.now() times for the timing checks.
 // In demo mode it holds the fake prompts and no server runs.
 const prompts = new Map();
+let answerServer = null; // the hook server, listening or waiting for its port
 let hookServer = null; // set once the server listens
+let answerRetryTimer = null;
+let portNoticeShown = false; // the "port in use" toast shows once per run
 let hookToken = null;
 let answeringNote = null; // tray note when answering is off
 let quitting = false;
+// Prompts are held only while the panel page is loaded and responsive.
+const panelHealth = createRendererHealth();
+let panelReloadTimer = null;
 let lastKept = []; // kept sessions from the last read, with cwd
 let lastVisible = []; // the kept sessions that are not dismissed
 
@@ -212,13 +226,21 @@ function buildSnapshot() {
 // --- Answering prompts -----------------------------------------------------
 
 function canHoldPrompts() {
-  return !quitting && visibility.canHold() && !!win && !win.isDestroyed();
+  return !quitting && visibility.canHold() && panelHealth.isAlive() && !!win && !win.isDestroyed();
+}
+
+// After any hold ended: once none is left, a pill that a prompt opened
+// closes again (never persisted; the user's own choice stays in settings).
+function afterHoldEnded() {
+  if (quitting || prompts.size > 0) return;
+  if (visibility.holdsEnded()) applyCollapsed();
 }
 
 // Ends a held prompt with no decision (204), so Desktop shows its own.
 function cancelHold(entry) {
   if (hookServer) hookServer.cancelSession(entry.sessionId);
   prompts.delete(entry.id);
+  afterHoldEnded();
 }
 
 // On every registry read: ends holds whose buddy is gone or dismissed, holds
@@ -239,8 +261,8 @@ function endStaleHolds(visible) {
   }
 }
 
-// Hiding the panel or turning quiet on ends every hold at once instead of
-// after HOLD_MS.
+// Hiding or hand-collapsing the panel, turning quiet on, or a dead or hung
+// panel page ends every hold at once instead of after HOLD_MS.
 function cancelAllHolds() {
   if (!hookServer || prompts.size === 0) return;
   for (const entry of [...prompts.values()]) cancelHold(entry);
@@ -261,8 +283,12 @@ function onPrompt({ id, sessionId, parsed }) {
   if (!view) throw new Error('prompt cannot be shown');
   prompts.set(id, createHold({ id, sessionId, parsed, view, now: performance.now() }));
   console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
-  // A collapsed pill opens so the card can be seen.
-  if (visibility.isCollapsed()) setCollapsed(false);
+  // A collapsed pill opens so the card can be seen; it closes again when no
+  // hold is left (afterHoldEnded). Not persisted.
+  if (visibility.expandForPrompt()) {
+    pillDrag.end();
+    applyCollapsed();
+  }
   scheduleRefresh();
 }
 
@@ -272,10 +298,18 @@ function onPrompt({ id, sessionId, parsed }) {
 function onCancel(id) {
   try {
     if (!prompts.delete(id)) return;
-    if (!quitting) scheduleRefresh();
+    if (quitting) return;
+    afterHoldEnded();
+    scheduleRefresh();
   } catch (err) {
     console.error(`[huddle] ending a prompt failed: ${err && err.message ? err.message : err}`);
   }
+}
+
+// The tray note and tooltip say when answering is off.
+function updateTray() {
+  rebuildTrayMenu();
+  if (tray && !tray.isDestroyed()) tray.setToolTip(answeringNote ? `Huddle\n${answeringNote}` : 'Huddle');
 }
 
 async function startAnswering() {
@@ -288,10 +322,10 @@ async function startAnswering() {
     // is and nothing is answered this run.
     console.error(`[huddle] hook token file unusable: ${err && err.code ? err.code : err}`);
     answeringNote = 'Answering off: token file unusable';
-    rebuildTrayMenu();
+    updateTray();
     return;
   }
-  const server = createHookServer({
+  answerServer = createHookServer({
     token: hookToken,
     port: HOOK_PORT,
     holdMs: HOLD_MS,
@@ -300,6 +334,16 @@ async function startAnswering() {
     onPrompt,
     onCancel,
   });
+  await listenForHooks();
+}
+
+// Starts listening. While the port is taken (or the start failed), the app
+// works on without answering, says so in the tray (and once in a toast for
+// a taken port), and tries again every ANSWER_RETRY_MS until it quits.
+async function listenForHooks() {
+  answerRetryTimer = null;
+  const server = answerServer;
+  if (!server || hookServer || quitting) return;
   let state;
   try {
     state = await server.start();
@@ -307,18 +351,32 @@ async function startAnswering() {
     console.error(`[huddle] hook server failed to start: ${err && err.message ? err.message : err}`);
     state = 'failed';
   }
-  if (state === 'listening' && !quitting) {
+  // before-quit stops the server; nothing more to do here.
+  if (quitting) return;
+  if (state === 'listening') {
     hookServer = server;
+    answeringNote = null;
     const address = server.address();
     console.log(`[huddle] answering on 127.0.0.1:${address ? address.port : HOOK_PORT}`);
   } else {
-    server.stop().catch(() => {});
-    if (state !== 'listening') {
-      answeringNote = `Answering off: port ${HOOK_PORT} in use`;
-      console.error(`[huddle] answering off: port ${HOOK_PORT} ${state}`);
-    }
+    answeringNote = state === 'in-use' ? `Answering off: port ${HOOK_PORT} in use` : 'Answering off: hook server failed';
+    console.error(`[huddle] answering off: port ${HOOK_PORT} ${state}; trying again in ${ANSWER_RETRY_MS / 1000} s`);
+    if (state === 'in-use') showPortNotice();
+    answerRetryTimer = setTimeout(() => {
+      listenForHooks().catch((err) => {
+        console.error(`[huddle] answering retry failed: ${err && err.stack ? err.stack : err}`);
+      });
+    }, ANSWER_RETRY_MS);
   }
-  rebuildTrayMenu();
+  updateTray();
+}
+
+// One toast per run when the hook port is taken (not in quiet mode).
+function showPortNotice() {
+  if (portNoticeShown) return;
+  portNoticeShown = true;
+  if (visibility.isQuiet()) return;
+  toastQueue.push({ sessionId: null, kind: 'notice', name: `Answering is off: port ${HOOK_PORT} in use` });
 }
 
 // Demo only: the fake prompts go into the same table as held ones, so the
@@ -374,14 +432,17 @@ function closeToast() {
 }
 
 // Shows one toast in a window that never takes focus: focusable false,
-// shown with showInactive, focus() is never called.
+// shown with showInactive, focus() is never called. A 'notice' toast is a
+// line of app status in the name slot, with no session behind it.
 function showToast(toast) {
   closeToast();
   // A toast may wait in the queue; re-check quiet and dismissal at show time.
   // A session that is gone from the last read is skipped too.
   if (visibility.isQuiet()) return;
-  if (!lastStatus.has(toast.sessionId)) return;
-  if (!dismissals.visible(toast.sessionId, lastStatus.get(toast.sessionId))) return;
+  if (toast.kind !== 'notice') {
+    if (!lastStatus.has(toast.sessionId)) return;
+    if (!dismissals.visible(toast.sessionId, lastStatus.get(toast.sessionId))) return;
+  }
   const w = new BrowserWindow({
     ...toastBounds(),
     frame: false,
@@ -410,6 +471,19 @@ function showToast(toast) {
   w.setAlwaysOnTop(true, 'screen-saver');
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (event) => event.preventDefault());
+  // A crashed or hung toast page is closed (after the event, not inside it);
+  // the queue moves on at its own time.
+  const closeBroken = () => {
+    setImmediate(() => {
+      try {
+        if (toastWin === w) closeToast();
+      } catch (err) {
+        console.error(`[huddle] closing a broken toast failed: ${err && err.message ? err.message : err}`);
+      }
+    });
+  };
+  w.webContents.on('render-process-gone', closeBroken);
+  w.webContents.on('unresponsive', closeBroken);
   w.once('ready-to-show', () => {
     if (!w.isDestroyed()) w.showInactive();
   });
@@ -417,13 +491,17 @@ function showToast(toast) {
     query: { name: String(toast.name || ''), kind: String(toast.kind) },
   });
   toastTimer = setTimeout(closeToast, TOAST_MS);
-  console.log(`[huddle] toast: ${toast.kind} ${toast.sessionId}`);
+  console.log(`[huddle] toast: ${toast.kind}${toast.sessionId ? ` ${toast.sessionId}` : ''}`);
 }
 
-// The toast's close cross: the toast goes at once and the queue moves on.
+// The toast's close cross: the toast goes at once and the queue moves on,
+// even when closing the window throws.
 function dismissToast() {
-  closeToast();
-  toastQueue.skip();
+  try {
+    closeToast();
+  } finally {
+    toastQueue.skip();
+  }
 }
 
 // Clickable only while the pointer is over the close cross; elsewhere the
@@ -437,7 +515,7 @@ function setToastClickable(clickable) {
 // The panel's Hide button: hidden like the hotkey or tray toggle, so held
 // prompts are released and Desktop takes over. Already hidden stays hidden.
 function hidePanel() {
-  if (!visibility.isHidden()) toggleHidden();
+  setHidden(true);
 }
 
 function updateVisibility(count) {
@@ -466,11 +544,27 @@ function rebuildTrayMenu() {
   if (tray && !tray.isDestroyed()) tray.setContextMenu(trayMenu());
 }
 
+function panelOnScreen() {
+  return !!win && !win.isDestroyed() && win.isVisible();
+}
+
+// Hide or show the panel (hotkey, tray, Hide button). A hide while the
+// window is not on screen (no session shown) is ignored: there is nothing
+// to hide, and a hidden state would only keep the panel away later. The
+// tray checkbox is rebuilt from the real state either way.
+function setHidden(hidden) {
+  if (visibility.setHidden(hidden, panelOnScreen())) {
+    console.log(`[huddle] panel ${visibility.isHidden() ? 'hidden' : 'shown'}`);
+    if (visibility.isHidden()) cancelAllHolds();
+    updateVisibility(lastSnapshot.sessions.length);
+  } else if (hidden && !visibility.isHidden()) {
+    console.log('[huddle] hide ignored: the panel is not on screen');
+  }
+  rebuildTrayMenu();
+}
+
 function toggleHidden() {
-  visibility.toggleHidden();
-  console.log(`[huddle] panel ${visibility.isHidden() ? 'hidden' : 'shown'}`);
-  if (visibility.isHidden()) cancelAllHolds();
-  updateVisibility(lastSnapshot.sessions.length);
+  setHidden(!visibility.isHidden());
 }
 
 function windowWidth() {
@@ -507,15 +601,24 @@ function applyWindowWidth() {
   setPanelBounds(panelTarget(b, width, b.height));
 }
 
-function setCollapsed(collapsed) {
-  // A drag of the pill ends when the panel opens (a prompt, the tray).
+// Applies the collapsed state to the window, the renderer and the tray.
+function applyCollapsed() {
+  applyWindowWidth();
+  sendUiState();
+  rebuildTrayMenu();
+}
+
+// The user's own collapse or expand (collapse button, pill, tray): it is
+// persisted and ends an automatic expand. A hand collapse also ends every
+// hold, since no card can be seen in the pill.
+function setCollapsedByUser(collapsed) {
+  // A drag of the pill ends when the panel opens.
   if (!collapsed) pillDrag.end();
   visibility.setCollapsed(collapsed);
   settings.collapsed = visibility.isCollapsed();
   persistSettings();
-  applyWindowWidth();
-  sendUiState();
-  rebuildTrayMenu();
+  if (visibility.isCollapsed()) cancelAllHolds();
+  applyCollapsed();
 }
 
 function setQuiet(quiet) {
@@ -628,7 +731,13 @@ function createWindow() {
     const b = win.getBounds();
     panelAnchor.moved(b.y, screen.getDisplayMatching(b).id);
   });
+  // A dead or hung panel page cannot show a card: holds end at once and new
+  // ones fall through until the page is alive again.
+  win.webContents.on('render-process-gone', (_event, details) => onPanelGone(details));
+  win.webContents.on('unresponsive', onPanelHung);
+  win.webContents.on('responsive', onPanelResponsive);
   win.webContents.on('did-finish-load', () => {
+    panelHealth.loaded();
     // A (re)loaded page has nothing yet: always send the current state.
     sendUiState();
     win.webContents.send('huddle:snapshot', lastSnapshot);
@@ -639,18 +748,74 @@ function createWindow() {
       setTimeout(pushDemoToast, 1000);
     }
   });
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  loadPanelPage();
+}
+
+function loadPanelPage() {
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html')).catch((err) => {
+    // Holding stays off until a load finishes (panelHealth).
+    console.error(`[huddle] loading the panel failed: ${err && err.message ? err.message : err}`);
+  });
+}
+
+// The panel page's process crashed or was killed: holds go to Desktop and
+// the page is reloaded after a short delay, unless it keeps crashing.
+function onPanelGone(details) {
+  try {
+    const delay = panelHealth.gone(performance.now());
+    console.error(`[huddle] panel page gone (${details && details.reason ? details.reason : 'unknown'}); prompts go to Desktop`);
+    cancelAllHolds();
+    if (quitting) return;
+    clearTimeout(panelReloadTimer);
+    panelReloadTimer = null;
+    if (delay === null) {
+      console.error('[huddle] panel page keeps crashing; not reloading it');
+      return;
+    }
+    panelReloadTimer = setTimeout(() => {
+      panelReloadTimer = null;
+      try {
+        if (!quitting && win && !win.isDestroyed()) loadPanelPage();
+      } catch (err) {
+        console.error(`[huddle] reloading the panel failed: ${err && err.message ? err.message : err}`);
+      }
+    }, delay);
+  } catch (err) {
+    console.error(`[huddle] handling a gone panel page failed: ${err && err.message ? err.message : err}`);
+  }
+}
+
+function onPanelHung() {
+  try {
+    panelHealth.hung();
+    console.error('[huddle] panel page not responding; prompts go to Desktop');
+    cancelAllHolds();
+  } catch (err) {
+    console.error(`[huddle] handling a hung panel page failed: ${err && err.message ? err.message : err}`);
+  }
+}
+
+function onPanelResponsive() {
+  try {
+    panelHealth.responsive();
+    console.log('[huddle] panel page responding again');
+  } catch (err) {
+    console.error(`[huddle] handling a responsive panel page failed: ${err && err.message ? err.message : err}`);
+  }
 }
 
 // Demo only: one fake 'waiting' toast for the demo waiting session, through
 // the same quiet and dismissal checks as real events.
 function pushDemoToast() {
+  if (!DEMO_TOAST) return;
   const s = demoSessions().find((d) => d.status === 'waiting');
   if (s) pushToast({ sessionId: s.sessionId, name: s.name, kind: 'waiting' }, s.status);
 }
 
 // Demo only: expand the waiting buddy, wait for the resize, save a PNG, quit.
+// Never in a packaged build (DEMO_SHOT is unset there).
 async function takeDemoShot() {
+  if (!DEMO_SHOT || app.isPackaged) return;
   try {
     await win.webContents.executeJavaScript(
       "document.querySelector('[data-session-id=\"demo-waiting\"] .buddy-body').click()",
@@ -708,12 +873,19 @@ function trayMenu() {
   if (answeringNote) items.push({ label: answeringNote, enabled: false });
   if (hotkeyNote || answeringNote) items.push({ type: 'separator' });
   items.push(
-    { label: 'Hide / Show panel', click: () => toggleHidden() },
+    {
+      // Shows the real hidden state; setHidden rebuilds the menu, so a hide
+      // ignored because the panel is not on screen unticks it again.
+      label: 'Panel hidden',
+      type: 'checkbox',
+      checked: visibility.isHidden(),
+      click: (item) => setHidden(item.checked),
+    },
     {
       label: 'Collapse panel',
       type: 'checkbox',
       checked: visibility.isCollapsed(),
-      click: (item) => setCollapsed(item.checked),
+      click: (item) => setCollapsedByUser(item.checked),
     },
     {
       label: 'Quiet mode',
@@ -814,7 +986,8 @@ ipcMain.on('huddle:dismiss', (event, sessionId) => {
 ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
   if (!fromOurWindow(event)) return;
   if (typeof collapsed !== 'boolean') return;
-  setCollapsed(collapsed);
+  // Only the collapse button and the pill send this: a user action.
+  setCollapsedByUser(collapsed);
 });
 
 // Tells the renderer that main refused an answer or an arm for a held
@@ -867,6 +1040,7 @@ ipcMain.on('huddle:answer', (event, payload) => {
     const sent = hookServer.resolve(entry.id, response);
     console.log(`[huddle] ${entry.view.kind} prompt answered: ${sent ? 'sent' : 'too late, Desktop decides'}`);
   }
+  afterHoldEnded();
   scheduleRefresh();
 });
 
@@ -934,10 +1108,15 @@ app.on('before-quit', () => {
   if (debounceTimer) clearTimeout(debounceTimer);
   if (watcher) watcher.close();
   if (tray) tray.destroy();
+  if (answerRetryTimer) clearTimeout(answerRetryTimer);
+  answerRetryTimer = null;
+  if (panelReloadTimer) clearTimeout(panelReloadTimer);
+  panelReloadTimer = null;
   toastQueue.clear();
   closeToast();
-  // Held prompts end with 204, so Desktop shows its own prompts.
-  if (hookServer) hookServer.stop().catch(() => {});
+  // Held prompts end with 204, so Desktop shows its own prompts. A server
+  // still waiting for its port is stopped too (no more retries).
+  if (answerServer) answerServer.stop().catch(() => {});
 });
 
 app.on('will-quit', () => {

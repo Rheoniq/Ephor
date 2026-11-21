@@ -9,23 +9,79 @@ const fresh = () => createVisibility({ collapsed: false, quiet: false });
 test('toggleHidden twice returns to visible', () => {
   const v = fresh();
   assert.equal(v.isHidden(), false);
-  v.toggleHidden();
+  assert.equal(v.toggleHidden(true), true);
   assert.equal(v.isHidden(), true);
-  v.toggleHidden();
+  assert.equal(v.toggleHidden(false), true, 'a hidden panel is never on screen; showing it always works');
   assert.equal(v.isHidden(), false);
+});
+
+test('toggleHidden ignores a hide when the window is not on screen (nothing to hide)', () => {
+  const v = fresh();
+  assert.equal(v.toggleHidden(false), false);
+  assert.equal(v.isHidden(), false);
+  // So the panel still appears when a session shows up.
+  assert.equal(v.shouldShowWindow(1), true);
+});
+
+test('setHidden: hiding needs the window on screen, showing does not', () => {
+  const v = fresh();
+  assert.equal(v.setHidden(true, false), false);
+  assert.equal(v.isHidden(), false);
+  assert.equal(v.setHidden(false, false), false, 'already shown');
+  assert.equal(v.setHidden(true, true), true);
+  assert.equal(v.isHidden(), true);
+  assert.equal(v.setHidden(true, true), false, 'already hidden');
+  assert.equal(v.setHidden(false, false), true);
+  assert.equal(v.isHidden(), false);
+});
+
+test('expandForPrompt opens a collapsed pill without counting as the user choice', () => {
+  const v = createVisibility({ collapsed: true, quiet: false });
+  assert.equal(v.expandForPrompt(), true);
+  assert.equal(v.isCollapsed(), false);
+  assert.equal(v.isAutoExpanded(), true);
+  assert.equal(v.expandForPrompt(), false, 'already open');
+  // The holds end: back to the pill.
+  assert.equal(v.holdsEnded(), true);
+  assert.equal(v.isCollapsed(), true);
+  assert.equal(v.isAutoExpanded(), false);
+  assert.equal(v.holdsEnded(), false);
+});
+
+test('expandForPrompt leaves an expanded panel alone, and holdsEnded then does nothing', () => {
+  const v = fresh();
+  assert.equal(v.expandForPrompt(), false);
+  assert.equal(v.isAutoExpanded(), false);
+  assert.equal(v.holdsEnded(), false);
+  assert.equal(v.isCollapsed(), false);
+});
+
+test('a user collapse or expand while auto-expanded wins over the re-collapse', () => {
+  const v = createVisibility({ collapsed: true, quiet: false });
+  v.expandForPrompt();
+  v.setCollapsed(false); // the user keeps it open
+  assert.equal(v.isAutoExpanded(), false);
+  assert.equal(v.holdsEnded(), false);
+  assert.equal(v.isCollapsed(), false);
+
+  const w = createVisibility({ collapsed: true, quiet: false });
+  w.expandForPrompt();
+  w.setCollapsed(true); // the user collapses it by hand
+  assert.equal(w.isAutoExpanded(), false);
+  assert.equal(w.isCollapsed(), true);
 });
 
 test('shouldShowWindow needs sessions and not hidden', () => {
   const v = fresh();
   assert.equal(v.shouldShowWindow(0), false);
   assert.equal(v.shouldShowWindow(2), true);
-  v.toggleHidden();
+  v.toggleHidden(true);
   assert.equal(v.shouldShowWindow(2), false);
 });
 
 test('canHold is false when hidden', () => {
   const v = fresh();
-  v.toggleHidden();
+  v.toggleHidden(true);
   assert.equal(v.canHold(), false);
 });
 
