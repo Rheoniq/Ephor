@@ -34,7 +34,15 @@ const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
 const { createHookServer } = require('./hooks');
 const { parseHook } = require('./prompts');
-const { promptView, buildResponse, matchBuddy, holdState } = require('./answering');
+const {
+  promptView,
+  buildResponse,
+  matchBuddy,
+  holdState,
+  createHold,
+  armHold,
+  answerInTime,
+} = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
 
 // HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
@@ -98,9 +106,10 @@ let settingsFile = null;
 let settings = { ...SETTINGS_DEFAULTS };
 let visibility = createVisibility(settings);
 let hotkeyNote = null; // set when the global hotkey could not be registered
-// Held hook prompts: id -> { id, sessionId, parsed, view, sawWaiting }.
-// `view` is what the snapshot shows; `parsed` keeps the raw input for the
-// response. In demo mode it holds the fake prompts and no server runs.
+// Held hook prompts: id -> entry from createHold (answering.js). `view` is
+// what the snapshot shows; `parsed` keeps the raw input for the response;
+// `heldAt` and `armedAt` are performance.now() times for the timing checks.
+// In demo mode it holds the fake prompts and no server runs.
 const prompts = new Map();
 let hookServer = null; // set once the server listens
 let hookToken = null;
@@ -207,13 +216,7 @@ function onPrompt({ id, sessionId, parsed }) {
   const view = promptView(parsed);
   // A throw makes the server end the hold with 204.
   if (!view) throw new Error('prompt cannot be shown');
-  prompts.set(id, {
-    id,
-    sessionId,
-    parsed,
-    view: { id, ...view },
-    sawWaiting: lastStatus.get(sessionId) === 'waiting',
-  });
+  prompts.set(id, createHold({ id, sessionId, parsed, view, now: performance.now() }));
   console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
   // A collapsed pill opens so the card can be seen.
   if (visibility.isCollapsed()) setCollapsed(false);
@@ -238,8 +241,10 @@ async function startAnswering() {
   try {
     hookToken = loadOrCreateToken(path.join(app.getPath('userData'), TOKEN_FILE));
   } catch (err) {
-    console.error(`[huddle] hook token could not be saved: ${err && err.message ? err.message : err}`);
-    answeringNote = 'Answering off: token could not be saved';
+    // Unreadable (other than missing) or not savable: the file is left as it
+    // is and nothing is answered this run.
+    console.error(`[huddle] hook token file unusable: ${err && err.code ? err.code : err}`);
+    answeringNote = 'Answering off: token file unusable';
     rebuildTrayMenu();
     return;
   }
@@ -279,7 +284,7 @@ function loadDemoPrompts() {
   for (const { id, body } of demoPrompts()) {
     const parsed = parseHook(body);
     const view = promptView(parsed);
-    if (view) prompts.set(id, { id, sessionId: parsed.sessionId, parsed, view: { id, ...view }, sawWaiting: false });
+    if (view) prompts.set(id, createHold({ id, sessionId: parsed.sessionId, parsed, view, now: performance.now() }));
   }
 }
 
@@ -671,11 +676,24 @@ ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
   setCollapsed(collapsed);
 });
 
+// The first Allow click on a permission card. Main keeps the time, so an
+// allow counts only as a second step 400 ms to 5 s later (answerInTime).
+ipcMain.on('huddle:arm', (event, id) => {
+  if (!fromOurWindow(event)) return;
+  if (typeof id !== 'string' || id.length > MAX_PROMPT_ID_LEN) return;
+  const entry = prompts.get(id);
+  if (entry && !armHold(entry, performance.now())) {
+    console.error('[huddle] arm ignored: not a permission prompt, or too soon');
+  }
+});
+
 // An answer from a prompt card: { id, kind, answers?, allow? }. It counts
-// only for a held prompt and only when it fits that prompt exactly (see
-// buildResponse); anything else is ignored and the hold runs out.
+// only for a held prompt, only when it fits that prompt exactly (see
+// buildResponse) and only at an acceptable time (see answerInTime);
+// anything else is ignored and the hold runs out.
 ipcMain.on('huddle:answer', (event, payload) => {
   if (!fromOurWindow(event)) return;
+  const at = performance.now();
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
   if (typeof payload.id !== 'string' || payload.id.length > MAX_PROMPT_ID_LEN) return;
   const entry = prompts.get(payload.id);
@@ -683,6 +701,10 @@ ipcMain.on('huddle:answer', (event, payload) => {
   const response = buildResponse(entry.parsed, payload);
   if (!response) {
     console.error(`[huddle] answer ignored: it does not fit the ${entry.view.kind} prompt`);
+    return;
+  }
+  if (!answerInTime(entry, payload, at)) {
+    console.error(`[huddle] answer ignored: ${entry.view.kind} prompt answered too soon or not confirmed`);
     return;
   }
   prompts.delete(entry.id);

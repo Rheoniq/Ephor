@@ -166,4 +166,53 @@ function holdState(entry, now) {
   return { sawWaiting, cancel: !now.visible || !now.canHold || leftWaiting };
 }
 
-module.exports = { promptView, buildResponse, matchBuddy, holdState };
+// Timing rules for answers, checked in main so a faulty renderer cannot
+// approve with one message. An answer (or an arm) sooner than
+// MIN_ANSWER_AGE_MS after the prompt was held is refused: the card may have
+// appeared under a click meant for the row that was there before. Allow on
+// a permission prompt needs an arm first (huddle:arm) and then the allow
+// MIN_CONFIRM_MS to ARM_MS later, so one double-click cannot approve.
+const MIN_ANSWER_AGE_MS = 500;
+const MIN_CONFIRM_MS = 400;
+const ARM_MS = 5000;
+
+// A new held prompt. `sawWaiting` starts false: only registry reads made
+// after the prompt arrived count, so a 'waiting' left from an earlier
+// dialog cannot end a fresh hold. `now` is a monotonic time in ms.
+function createHold({ id, sessionId, parsed, view, now }) {
+  return { id, sessionId, parsed, view: { id, ...view }, heldAt: now, armedAt: null, sawWaiting: false };
+}
+
+// Records the first Allow click of a permission prompt. A later arm starts
+// the window again. Returns false (and records nothing) for an ask or a
+// prompt younger than MIN_ANSWER_AGE_MS.
+function armHold(entry, now) {
+  if (!isObject(entry) || !isObject(entry.parsed) || entry.parsed.kind !== 'permission') return false;
+  if (now - entry.heldAt < MIN_ANSWER_AGE_MS) return false;
+  entry.armedAt = now;
+  return true;
+}
+
+// Whether an answer arrives at an acceptable time for its prompt.
+function answerInTime(entry, payload, now) {
+  if (now - entry.heldAt < MIN_ANSWER_AGE_MS) return false;
+  if (entry.parsed.kind === 'permission' && payload.allow === true) {
+    if (typeof entry.armedAt !== 'number') return false;
+    const since = now - entry.armedAt;
+    return since >= MIN_CONFIRM_MS && since <= ARM_MS;
+  }
+  return true;
+}
+
+module.exports = {
+  promptView,
+  buildResponse,
+  matchBuddy,
+  holdState,
+  createHold,
+  armHold,
+  answerInTime,
+  MIN_ANSWER_AGE_MS,
+  MIN_CONFIRM_MS,
+  ARM_MS,
+};

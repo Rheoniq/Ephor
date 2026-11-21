@@ -102,15 +102,22 @@
     armTimer = setTimeout(tick, window.HuddlePrompt.ARM_MS + 50);
   }
 
-  // Allow needs a second click within ARM_MS; Deny is one click.
+  // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
+  // Deny is one click.
   function renderPermission(st, view) {
     const card = el('div', 'prompt permission');
     const summary = el('p', 'prompt-summary', str(view.summary));
     summary.title = str(view.summary);
     const allow = promptButton(view.armed ? 'Confirm allow' : 'Allow', 'allow', view.armed ? 'allow armed' : 'allow');
     allow.addEventListener('click', () => {
-      if (st.armAllow() === 'send') window.huddle.answer({ id: view.id, kind: 'permission', allow: true });
-      else scheduleArmExpiry();
+      const wasArmed = st.confirmPending();
+      if (st.armAllow() === 'send') {
+        window.huddle.answer({ id: view.id, kind: 'permission', allow: true });
+      } else if (!wasArmed && st.confirmPending()) {
+        // A fresh arm: main records it too and takes the allow only after it.
+        window.huddle.arm(view.id);
+        scheduleArmExpiry();
+      }
       render();
     });
     const deny = promptButton('Deny', 'deny', 'deny');
@@ -128,6 +135,9 @@
   function renderPrompt(prompt) {
     const st = promptStateFor(prompt);
     const view = st && st.current();
+    // An answered card is hidden at once, but main may still ignore the
+    // answer (it does not fit, or its timing is refused). The hold then runs
+    // to its 15 s timeout and Desktop shows its own prompt.
     if (!view || view.answered) return null;
     return view.kind === 'ask' ? renderAsk(st, view) : renderPermission(st, view);
   }

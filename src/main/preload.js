@@ -25,4 +25,8 @@ contextBridge.exposeInMainWorld('huddle', {
   answer(payload) {
     ipcRenderer.send('huddle:answer', payload);
   },
+  // The first Allow click of a permission card, by prompt id.
+  arm(id) {
+    ipcRenderer.send('huddle:arm', id);
+  },
 });

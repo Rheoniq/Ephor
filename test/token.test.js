@@ -47,11 +47,47 @@ test('a file with malformed content is regenerated', (t) => {
   }
 });
 
-test('throws when a new token cannot be saved, so no unsaved token is used', (t) => {
+// A stand-in for fs whose read fails with `readCode` and whose writes are
+// recorded (or fail with `writeCode`).
+function fakeFs({ readCode, writeCode }) {
+  const writes = [];
+  return {
+    writes,
+    readFileSync() {
+      throw Object.assign(new Error(readCode), { code: readCode });
+    },
+    mkdirSync() {},
+    writeFileSync(file, data) {
+      if (writeCode) throw Object.assign(new Error(writeCode), { code: writeCode });
+      writes.push([file, data]);
+    },
+  };
+}
+
+test('a read error other than a missing file throws and never overwrites the file', () => {
+  for (const code of ['EACCES', 'EPERM', 'EBUSY', 'EISDIR']) {
+    const io = fakeFs({ readCode: code });
+    assert.throws(() => loadOrCreateToken('C:\\x\\hook-token', io), { code });
+    assert.deepEqual(io.writes, [], code);
+  }
+});
+
+test('a directory at the path is left alone', (t) => {
   const file = tempFile(t);
-  // A directory at the path can be neither read as a file nor written over.
   fs.mkdirSync(file, { recursive: true });
   assert.throws(() => loadOrCreateToken(file));
+  assert.equal(fs.statSync(file).isDirectory(), true);
+});
+
+test('a missing file is created through the given fs', () => {
+  const io = fakeFs({ readCode: 'ENOENT' });
+  const token = loadOrCreateToken('C:\\x\\hook-token', io);
+  assert.deepEqual(io.writes, [['C:\\x\\hook-token', token]]);
+});
+
+test('throws when a new token cannot be saved, so no unsaved token is used', () => {
+  const io = fakeFs({ readCode: 'ENOENT', writeCode: 'EACCES' });
+  assert.throws(() => loadOrCreateToken('C:\\x\\hook-token', io), { code: 'EACCES' });
 });
 
 test('surrounding whitespace in the file is ignored', (t) => {

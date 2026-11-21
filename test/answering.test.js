@@ -4,7 +4,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { parseHook, askResponse, permissionResponse } = require('../src/main/prompts');
-const { promptView, buildResponse, matchBuddy, holdState } = require('../src/main/answering');
+const {
+  promptView,
+  buildResponse,
+  matchBuddy,
+  holdState,
+  createHold,
+  armHold,
+  answerInTime,
+  MIN_ANSWER_AGE_MS,
+  MIN_CONFIRM_MS,
+  ARM_MS,
+} = require('../src/main/answering');
 const { transcriptPath } = require('../src/main/paths');
 
 const SESSION = 'cd47e535-4ad5-4353-b403-4cd8a2f1f0c7';
@@ -272,4 +283,81 @@ test('holdState: a hidden buddy or a panel that cannot hold cancels', () => {
   assert.equal(holdState({ sawWaiting: false }, { status: 'busy', visible: false, canHold: true }).cancel, true);
   assert.equal(holdState({ sawWaiting: false }, { status: 'busy', visible: true, canHold: false }).cancel, true);
   assert.equal(holdState({ sawWaiting: false }, { status: undefined, visible: false, canHold: true }).cancel, true);
+});
+
+// --- createHold, armHold, answerInTime ---
+
+function hold(kind = 'permission', heldAt = 10000) {
+  const parsed = kind === 'ask' ? askParsed([q('Q?', ['A', 'B'])]) : permParsed();
+  return createHold({ id: 'p1', sessionId: SESSION, parsed, view: promptView(parsed), now: heldAt });
+}
+
+test('timing constants', () => {
+  assert.equal(MIN_ANSWER_AGE_MS, 500);
+  assert.equal(MIN_CONFIRM_MS, 400);
+  assert.equal(ARM_MS, 5000);
+});
+
+test('createHold starts unarmed and with no waiting seen, whatever the registry said before', () => {
+  const entry = hold();
+  assert.equal(entry.id, 'p1');
+  assert.equal(entry.sessionId, SESSION);
+  assert.equal(entry.heldAt, 10000);
+  assert.equal(entry.armedAt, null);
+  assert.equal(entry.sawWaiting, false);
+  assert.deepEqual(entry.view, { id: 'p1', ...promptView(entry.parsed) });
+  // A stale 'waiting' from an earlier dialog was read before the prompt
+  // arrived and is not counted: the first read after it says busy, no cancel.
+  assert.equal(holdState(entry, { status: 'busy', visible: true, canHold: true }).cancel, false);
+});
+
+test('answerInTime: an ask answered at 100 ms is refused, at 600 ms accepted', () => {
+  const entry = hold('ask', 10000);
+  const payload = { id: 'p1', kind: 'ask', answers: { 'Q?': 'A' } };
+  assert.equal(answerInTime(entry, payload, 10100), false);
+  assert.equal(answerInTime(entry, payload, 10000 + MIN_ANSWER_AGE_MS - 1), false);
+  assert.equal(answerInTime(entry, payload, 10600), true);
+});
+
+test('answerInTime: Deny needs no arm but the minimum age', () => {
+  const entry = hold('permission', 10000);
+  const deny = { id: 'p1', kind: 'permission', allow: false };
+  assert.equal(answerInTime(entry, deny, 10100), false);
+  assert.equal(answerInTime(entry, deny, 10600), true);
+});
+
+test('answerInTime: Allow without an arm is refused', () => {
+  const entry = hold('permission', 10000);
+  assert.equal(answerInTime(entry, { id: 'p1', kind: 'permission', allow: true }, 12000), false);
+});
+
+test('answerInTime: Allow too soon after the arm is refused, then accepted, then expired', () => {
+  const entry = hold('permission', 10000);
+  const allow = { id: 'p1', kind: 'permission', allow: true };
+  assert.equal(armHold(entry, 10600), true);
+  assert.equal(entry.armedAt, 10600);
+  assert.equal(answerInTime(entry, allow, 10700), false, 'a double-click');
+  assert.equal(answerInTime(entry, allow, 10600 + MIN_CONFIRM_MS - 1), false);
+  assert.equal(answerInTime(entry, allow, 10600 + MIN_CONFIRM_MS), true);
+  assert.equal(answerInTime(entry, allow, 10600 + ARM_MS), true);
+  assert.equal(answerInTime(entry, allow, 10600 + ARM_MS + 1), false, 'expired arm');
+});
+
+test('armHold: a later arm restarts the window', () => {
+  const entry = hold('permission', 10000);
+  armHold(entry, 10600);
+  armHold(entry, 20000);
+  const allow = { id: 'p1', kind: 'permission', allow: true };
+  assert.equal(answerInTime(entry, allow, 20100), false);
+  assert.equal(answerInTime(entry, allow, 20500), true);
+});
+
+test('armHold: refused for a young card and for an ask', () => {
+  const young = hold('permission', 10000);
+  assert.equal(armHold(young, 10100), false);
+  assert.equal(young.armedAt, null);
+  const asking = hold('ask', 10000);
+  assert.equal(armHold(asking, 11000), false);
+  assert.equal(asking.armedAt, null);
+  assert.equal(armHold(null, 11000), false);
 });
