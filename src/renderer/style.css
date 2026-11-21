@@ -1,46 +1,68 @@
+/* Huddle panel. Warm paper, ink text and one clay accent. Every text color
+   below is at least 4.5:1 on the surfaces it sits on, and every control
+   boundary or status mark at least 3:1, in both themes. No web fonts. */
 :root {
   color-scheme: light dark;
-  --bg: rgba(242, 242, 246, 0.97);
-  --card: #ffffff;
-  --fg: #1d1d22;
-  --muted: #62626d;
-  --border: rgba(0, 0, 0, 0.08);
-  --card-border: rgba(0, 0, 0, 0.06);
-  --row-hover: rgba(0, 0, 0, 0.04);
-  --btn-hover: rgba(0, 0, 0, 0.07);
-  --chip: rgba(0, 0, 0, 0.06);
-  --focus: #2f6fed;
-  --busy: #2f9e5a;
-  --idle: #a3a3ad;
-  --wait: #d97706;
-  --wait-bg: rgba(245, 158, 11, 0.10);
-  --wait-border: #f59e0b;
-  --steps-bg: rgba(0, 0, 0, 0.035);
-  --ink: #1d1d22; /* face lines on the avatar; the blob fill is mid-tone in both themes */
-  --shadow: 0 8px 24px rgba(20, 20, 40, 0.14), 0 1px 3px rgba(20, 20, 40, 0.10);
-  --card-shadow: 0 1px 2px rgba(20, 20, 40, 0.06);
+  --serif: Georgia, "Times New Roman", serif;
+  --sans: "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+
+  --paper: #f0eee6; /* panel */
+  --card: #faf9f5; /* session card */
+  --inset: #f0eee6; /* prompt card inside a session card */
+  --control: #faf9f5; /* option and Allow/Deny buttons */
+  --fg: #141413;
+  --muted: #5e5d59;
+  --line: rgba(20, 20, 19, 0.10); /* decorative borders */
+  --control-line: #838178; /* button borders, 3:1 or more on paper and card */
+  --rule: rgba(20, 20, 19, 0.14);
+  --hover: rgba(20, 20, 19, 0.06);
+  --chip: rgba(20, 20, 19, 0.07);
+  --focus: #141413;
+
+  --clay: #d97757; /* the accent: armed Allow, waiting */
+  --clay-strong: #c96442; /* clay marks on paper: alert dot, pixel "!" */
+  --clay-text: #9e5740;
+  --on-clay: #141413;
+  --wait-tint: rgba(217, 119, 87, 0.09);
+  --wait-line: rgba(201, 100, 66, 0.55);
+  --busy: #788c5d; /* olive */
+  --busy-text: #60704a;
+  --done: #4a6d8f; /* slate blue */
+  --done-text: #4a6d8f;
+
+  --shadow: 0 3px 10px rgba(20, 20, 19, 0.10), 0 1px 2px rgba(20, 20, 19, 0.06);
+  --card-shadow: 0 1px 2px rgba(20, 20, 19, 0.04);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: rgba(22, 22, 27, 0.97);
-    --card: #1e1e24;
-    --fg: #ececf1;
-    --muted: #a3a3ae;
-    --border: rgba(255, 255, 255, 0.09);
-    --card-border: rgba(255, 255, 255, 0.06);
-    --row-hover: rgba(255, 255, 255, 0.04);
-    --btn-hover: rgba(255, 255, 255, 0.10);
-    --chip: rgba(255, 255, 255, 0.09);
-    --focus: #7aa7ff;
-    --busy: #4cc27a;
-    --idle: #6e6e7a;
-    --wait: #fbbf24;
-    --wait-bg: rgba(251, 191, 36, 0.10);
-    --wait-border: #fbbf24;
-    --steps-bg: rgba(255, 255, 255, 0.04);
-    --shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
-    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --paper: #1f1e1d;
+    --card: #2a2926;
+    --inset: #232220;
+    --control: #2a2926;
+    --fg: #f0eee6;
+    --muted: #a6a39a;
+    --line: rgba(240, 238, 230, 0.10);
+    --control-line: #7c7a72;
+    --rule: rgba(240, 238, 230, 0.14);
+    --hover: rgba(240, 238, 230, 0.07);
+    --chip: rgba(240, 238, 230, 0.09);
+    --focus: #f0eee6;
+
+    --clay: #d97757;
+    --clay-strong: #d97757;
+    --clay-text: #dd8669;
+    --on-clay: #141413;
+    --wait-tint: rgba(217, 119, 87, 0.10);
+    --wait-line: rgba(217, 119, 87, 0.55);
+    --busy: #92a27c;
+    --busy-text: #92a27c;
+    --done: #73a1cf;
+    --done-text: #73a1cf;
+
+    --shadow: 0 3px 10px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   }
 }
 
@@ -54,46 +76,51 @@ html, body {
 }
 
 body {
-  font: 13px/1.35 "Segoe UI", system-ui, sans-serif;
+  font: 13px/1.35 var(--sans);
   color: var(--fg);
 }
 
 .panel {
   margin: 6px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 16px;
   box-shadow: var(--shadow);
   overflow: hidden;
 }
 
+/* Header: Quit at the far left, away from Collapse and Hide at the right,
+   so it is not hit by accident. The header drags the window. */
 .handle {
   -webkit-app-region: drag;
   user-select: none;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px 6px 4px; /* the Quit button leads */
-  border-bottom: 1px solid var(--border);
+  gap: 4px;
+  padding: 7px 8px 7px 6px;
+  border-bottom: 1px solid var(--line);
   cursor: grab;
 }
 
 .handle-title {
-  margin-right: auto;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  margin: 0 auto 0 4px;
+  font: 400 17px/1.2 var(--serif);
+  letter-spacing: 0.005em;
   color: var(--fg);
 }
 
+/* The count sits right after the title when there is one. */
+.handle-title:has(+ .handle-count:not(:empty)) { margin-right: 4px; }
+
 .handle-count {
+  margin-right: auto;
   min-width: 20px;
   padding: 1px 7px;
   border-radius: 999px;
   background: var(--chip);
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  font: 600 11px/1.45 var(--sans);
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
@@ -104,36 +131,44 @@ body {
   margin: 0;
   padding: 8px;
   /* The window is clamped at 800px (panel.js MAX_HEIGHT). 800 minus the panel
-     margins (12), border (2) and handle (about 39) leaves about 747; 740 keeps
+     margins (12), border (2) and handle (about 43) leaves about 743; 740 keeps
      a little slack, and the list scrolls beyond it. */
   max-height: 740px;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
+.buddies::-webkit-scrollbar { width: 10px; }
+
+.buddies::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+
 .empty {
-  padding: 10px 8px;
+  padding: 14px 8px;
   color: var(--muted);
+  font: italic 14px/1.3 var(--serif);
   text-align: center;
 }
 
-/* Session card: the accent bar on the left follows the status. */
+/* Session card. Waiting gets the clay tint and a clay edge; every status
+   also has its own label and avatar face, so color is never the only cue. */
 .buddy {
-  --accent: var(--idle);
   background: var(--card);
-  border: 1px solid var(--card-border);
-  border-radius: 12px;
-  box-shadow: inset 3px 0 0 var(--accent), var(--card-shadow);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--card-shadow);
   overflow: hidden;
 }
 
-.buddy + .buddy { margin-top: 6px; }
-
-.buddy.busy { --accent: var(--busy); }
+.buddy + .buddy { margin-top: 8px; }
 
 .buddy.waiting {
-  --accent: var(--wait-border);
-  background: linear-gradient(var(--wait-bg), var(--wait-bg)), var(--card);
+  background: linear-gradient(var(--wait-tint), var(--wait-tint)), var(--card);
+  border-color: var(--wait-line);
 }
 
 .buddy-row {
@@ -165,19 +200,20 @@ button:focus-visible {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 6px 6px 10px;
-  border-radius: 10px;
+  gap: 12px;
+  padding: 9px 6px 9px 11px;
+  border-radius: 12px;
   text-align: left;
 }
 
-.buddy-body:hover { background: var(--row-hover); }
+.buddy-body:hover { background: var(--hover); }
 
 .name-box {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 1px;
 }
 
 .name {
@@ -185,21 +221,51 @@ button:focus-visible {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 13px;
-  font-weight: 400;
+  font: 400 14px/1.3 var(--serif);
+  color: var(--fg);
 }
 
-.buddy.waiting .name { font-weight: 600; }
-.buddy.idle .name { color: var(--muted); }
-
-/* Finished: idle, just done and not looked at yet. Existing tokens for now. */
-.buddy.finished { --accent: var(--focus); }
-.buddy.finished .name { color: var(--fg); }
-
+/* Status label under the name, led by a small mark: a pulsing olive pixel
+   for busy, a clay pixel for waiting, a check for finished. */
 .state-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--focus);
+  position: relative;
+  align-self: flex-start;
+  padding-left: 12px;
+  font: 600 11.5px/1.3 var(--sans);
+  color: var(--muted);
+}
+
+.state-label::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  background: currentColor;
+}
+
+.buddy.busy .state-label { color: var(--busy-text); }
+.buddy.busy .state-label::before { background: var(--busy); }
+
+.buddy.waiting .state-label { color: var(--clay-text); }
+.buddy.waiting .state-label::before { background: var(--clay-strong); }
+
+.buddy.finished .state-label {
+  padding-left: 14px;
+  color: var(--done-text);
+}
+
+.buddy.finished .state-label::before {
+  left: 1px;
+  width: 8px;
+  height: 4px;
+  margin-top: -5px;
+  background: none;
+  border-left: 2px solid var(--done);
+  border-bottom: 2px solid var(--done);
+  transform: rotate(-45deg);
 }
 
 .icon-btn {
@@ -212,17 +278,17 @@ button:focus-visible {
 }
 
 .icon-btn:hover {
-  background: var(--btn-hover);
+  background: var(--hover);
   color: var(--fg);
 }
 
+/* Recent steps: a quiet list on a thin rule, aligned with the name. */
 .steps {
   list-style: none;
-  margin: 0 10px 10px 56px;
-  padding: 6px 10px;
-  background: var(--steps-bg);
-  border-radius: 8px;
-  font-size: 12px;
+  margin: -2px 14px 12px 59px;
+  padding: 1px 0 1px 10px;
+  border-left: 2px solid var(--rule);
+  font: 12px/1.45 var(--sans);
   color: var(--muted);
 }
 
@@ -230,7 +296,6 @@ button:focus-visible {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  padding: 1px 0;
 }
 
 .steps li:first-child { color: var(--fg); }
@@ -238,32 +303,41 @@ button:focus-visible {
 .steps .no-steps { font-style: italic; }
 
 /* Prompt card under the row: a question with option buttons, or a
-   permission request with Allow and Deny. Aligned with the step list. */
+   permission request with Allow and Deny. Aligned with the name. */
 .prompt {
-  margin: 0 10px 10px 56px;
-  padding: 8px 10px;
-  background: var(--steps-bg);
-  border-radius: 8px;
+  margin: -2px 12px 12px 59px;
+  padding: 10px 12px 12px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
+
+.prompt + .steps { margin-top: 0; }
 
 .prompt-text,
 .prompt-tool,
 .prompt-summary {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 
-.prompt-text,
+.prompt-text {
+  font: 400 14px/1.35 var(--serif);
+  overflow-wrap: anywhere;
+}
+
 .prompt-tool {
-  font-weight: 600;
+  margin-bottom: 4px;
+  font: 600 12.5px/1.3 var(--sans);
   overflow-wrap: anywhere;
 }
 
 /* One line; the full summary is in the title. */
 .prompt-summary {
+  margin-bottom: 10px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: 12px/1.35 "Cascadia Mono", Consolas, monospace;
+  font: 12px/1.35 var(--mono);
   color: var(--muted);
 }
 
@@ -273,30 +347,37 @@ button:focus-visible {
   gap: 6px;
 }
 
-/* Labels wrap rather than cut, so the whole choice is visible. */
+/* Pill buttons. Labels wrap rather than cut, so the whole choice is
+   visible; the radius stays a pill on one line and soft on more. */
 .prompt-btn {
   max-width: 100%;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  font-size: 12px;
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid var(--control-line);
+  border-radius: 14px;
+  background: var(--control);
+  color: var(--fg);
+  font: 12.5px/1.3 var(--sans);
   text-align: left;
   overflow-wrap: anywhere;
 }
 
-.prompt-btn:hover { background: var(--btn-hover); }
+.prompt-btn:hover { background: linear-gradient(var(--hover), var(--hover)), var(--control); }
 
-.prompt-btn.chosen {
-  border-color: var(--focus);
-  box-shadow: inset 0 0 0 1px var(--focus);
+/* A picked option on a multi-select question: a thicker clay ring. */
+.prompt-btn.chosen,
+.prompt-btn.chosen:hover {
+  border-color: var(--clay-strong);
+  box-shadow: inset 0 0 0 1px var(--clay-strong);
+  background: linear-gradient(var(--wait-tint), var(--wait-tint)), var(--control);
 }
 
 .prompt-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
-.prompt-btn:disabled:hover { background: var(--card); }
+.prompt-btn:disabled:hover { background: var(--control); }
 
 .prompt-btn.done,
 .prompt-btn.allow { font-weight: 600; }
@@ -304,9 +385,9 @@ button:focus-visible {
 /* Armed: the next click on Allow sends it. */
 .prompt-btn.allow.armed,
 .prompt-btn.allow.armed:hover {
-  background: var(--wait);
-  border-color: var(--wait);
-  color: #1d1d22;
+  background: var(--clay);
+  border-color: var(--clay-strong);
+  color: var(--on-clay);
 }
 
 .sr-only {
@@ -318,7 +399,7 @@ button:focus-visible {
   white-space: nowrap;
 }
 
-/* Avatar: 36 px blob from avatar.js. */
+/* Avatar: the 36 px pixel creature from avatar.js. */
 .avatar {
   flex: none;
   width: 36px;
@@ -326,41 +407,13 @@ button:focus-visible {
   overflow: visible;
 }
 
-.av-pupil,
-.av-mouth-o { fill: var(--ink); }
+.av-pulse-px { fill: var(--busy); }
+.av-alert-px { fill: var(--clay-strong); }
 
-.av-lid,
-.av-mouth:not(.av-mouth-o) {
-  stroke: var(--ink);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-}
-
-.av-idle .av-figure { opacity: 0.8; }
-
-.av-dot {
-  fill: var(--busy);
-  stroke: var(--card);
-  stroke-width: 1.2;
-}
-
-.av-bubble-bg {
-  fill: var(--wait);
-  stroke: var(--card);
-  stroke-width: 1.5;
-}
-
-.av-mark {
-  fill: #1d1d22;
-  font: 800 9px "Segoe UI", system-ui, sans-serif;
-}
-
-/* Header buttons and collapsed pill. Quit sits at the far left, away from
-   Collapse and Hide at the right, so it is not hit by accident. */
 .handle .collapse,
 .handle .hide {
   -webkit-app-region: no-drag;
-  font-size: 16px;
+  font-size: 17px;
 }
 
 .handle .quit {
@@ -368,7 +421,6 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-right: 2px;
 }
 
 .quit-icon {
@@ -378,6 +430,7 @@ button:focus-visible {
   stroke-linecap: round;
 }
 
+/* Collapsed pill: the session count and a clay "!" when any session waits. */
 .pill { display: none; }
 
 .panel.collapsed {
@@ -395,8 +448,7 @@ button:focus-visible {
   gap: 6px;
   padding: 5px 12px;
   border-radius: 999px;
-  font: inherit;
-  font-weight: 700;
+  font: 600 13px/1.35 var(--sans);
   color: var(--fg);
   background: transparent;
   border: 0;
@@ -407,7 +459,7 @@ button:focus-visible {
   touch-action: none;
 }
 
-.panel.collapsed .pill:hover { background: var(--row-hover); }
+.panel.collapsed .pill:hover { background: var(--hover); }
 
 .pill-count {
   min-width: 10px;
@@ -422,10 +474,9 @@ button:focus-visible {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--wait);
-  color: #1d1d22;
-  font-weight: 800;
-  font-size: 11px;
+  background: var(--clay-strong);
+  color: var(--on-clay);
+  font: 800 11px/1 var(--sans);
 }
 
 .pill-alert[hidden] { display: none; }
@@ -436,30 +487,25 @@ button:focus-visible {
   .prompt-btn,
   .panel.collapsed .pill { transition: background-color 120ms ease, color 120ms ease; }
 
-  .av-orbit {
-    transform-origin: 18px 18px;
-    animation: av-spin 2.4s linear infinite;
-  }
+  /* Busy: the pixel above the head and the label mark pulse gently. */
+  .av-busy .av-pulse,
+  .buddy.busy .state-label::before { animation: av-breathe 1.8s ease-in-out infinite; }
 
-  .av-busy .av-figure {
-    animation: av-bob 1.2s ease-in-out infinite;
-  }
-
-  .av-bubble {
-    transform-origin: 29px 7px;
-    animation: av-pulse 1.4s ease-in-out infinite;
-  }
+  /* Waiting: the pixel "!" hops one cell now and then. */
+  .av-waiting .av-alert { animation: av-hop 2.4s steps(1, end) infinite; }
 
   .pill-alert { animation: av-pulse 1.4s ease-in-out infinite; }
 }
 
-@keyframes av-spin {
-  to { transform: rotate(360deg); }
+@keyframes av-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 
-@keyframes av-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-1px); }
+/* In the avatar's 12 x 12 grid, 1px is one cell. */
+@keyframes av-hop {
+  0%, 70%, 85% { transform: translateY(0); }
+  75% { transform: translateY(-1px); }
 }
 
 @keyframes av-pulse {

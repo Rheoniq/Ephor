@@ -12,6 +12,8 @@
   };
   // An idle session that just finished and was not looked at yet.
   const FINISHED = { label: 'Finished' };
+  // Short visible tags under the name; screen readers get the label instead.
+  const TAGS = { busy: 'Working', waiting: 'Needs you', finished: 'Finished' };
 
   const panel = document.getElementById('panel');
   const list = document.getElementById('buddies');
@@ -167,9 +169,10 @@
     const avatar = window.HuddleAvatar.createAvatar(document, id, status);
     const nameBox = el('span', 'name-box');
     nameBox.append(el('span', 'name', name));
-    if (isFinished) {
-      // Visible label; screen readers get it from the sr-only prefix.
-      const tag = el('span', 'state-label', label);
+    const tagText = isFinished ? TAGS.finished : TAGS[status];
+    if (tagText) {
+      // Visible tag; screen readers get the status from the sr-only prefix.
+      const tag = el('span', 'state-label', tagText);
       tag.setAttribute('aria-hidden', 'true');
       nameBox.append(tag);
     }

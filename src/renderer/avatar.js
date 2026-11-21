@@ -1,22 +1,30 @@
 'use strict';
 
-// Per-session avatar: a small blob character in a color picked from the
-// session id, with a face that shows the status. Built with createElementNS
-// only, never innerHTML. Plain script: in the page it sets window.HuddleAvatar,
-// under Node it is a CommonJS module.
+// Per-session avatar: a small pixel-block creature in a color picked from the
+// session id, with one of three small variants picked by a second hash, and a
+// face that shows the status. Drawn on a 12 x 12 grid of 3 px cells with
+// crisp edges. Built with createElementNS only, never innerHTML. Plain script:
+// in the page it sets window.HuddleAvatar, under Node it is a CommonJS module.
 
 (function (root) {
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
-  // Mid-tone fills, each at least 3:1 against white and against #1e1e24, so
-  // the blob reads on a light card and on a dark card.
-  const PALETTE = ['#3b82f6', '#8b5cf6', '#d9548f', '#e0604f', '#119c93', '#4a9a3c'];
+  // Clay, olive green, sky blue, plum, golden, teal. Mid-tones, each at least
+  // 3:1 against the light and dark cards (plain and waiting tint), so the
+  // creature reads in both themes; the ink eyes stay at least 3:1 on each.
+  const PALETTE = ['#c96442', '#788c5d', '#5789bf', '#a46d9f', '#ad7e0a', '#289588'];
+
+  const EYE = '#141413';
 
   const STATUSES = ['busy', 'waiting', 'idle'];
 
+  function text(v) {
+    return typeof v === 'string' ? v : String(v);
+  }
+
   // FNV-1a over the UTF-16 code units: stable across runs and machines.
   function colorIndex(sessionId) {
-    const s = typeof sessionId === 'string' ? sessionId : String(sessionId);
+    const s = text(sessionId);
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
       h ^= s.charCodeAt(i);
@@ -25,14 +33,58 @@
     return h % PALETTE.length;
   }
 
-  // Soft gumdrop body with two little feet, in a 36 x 36 box.
-  const BODY =
-    'M18 6C25.5 6 30 11.5 30 19V26C30 28.8 28.4 31 26.2 31' +
-    'C24.6 31 23.6 30 22.4 30C21 30 20 31 18 31C16 31 15 30 13.6 30' +
-    'C12.4 30 11.4 31 9.8 31C7.6 31 6 28.8 6 26V19C6 11.5 10.5 6 18 6Z';
+  // A second, independent hash (another seed and multiplier, then the
+  // murmur3 finalizer), so two sessions of one color still tend to differ.
+  function variantIndex(sessionId) {
+    const s = text(sessionId);
+    let h = 0x9e3779b9;
+    for (let i = 0; i < s.length; i++) {
+      h = Math.imul(h ^ s.charCodeAt(i), 0x5bd1e995) >>> 0;
+      h ^= h >>> 15;
+    }
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x85ebca6b) >>> 0;
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35) >>> 0;
+    h ^= h >>> 16;
+    return (h >>> 0) % 3; // ^ gives a signed 32-bit value
+  }
+
+  // The creature in grid cells [x, y, width, height]: a wide block body, two
+  // arm nubs at the sides and four short legs in two pairs.
+  const BODY = [
+    [2, 4, 8, 5],
+    [1, 6, 1, 1],
+    [10, 6, 1, 1],
+    [2, 9, 1, 1],
+    [4, 9, 1, 1],
+    [7, 9, 1, 1],
+    [9, 9, 1, 1],
+  ];
+
+  // Small extras on top of the head, in the body color.
+  const VARIANTS = [
+    [[5, 2, 1, 2]], // 0: a pixel antenna
+    [[2, 3, 1, 1], [9, 3, 1, 1]], // 1: two ear nubs
+    [[6, 3, 1, 1], [7, 2, 1, 1]], // 2: a sprout leaning aside
+  ];
+
+  // Eyes per status: busy glances aside, waiting looks up with tall eyes,
+  // idle rests with flat bars.
+  const EYES = {
+    busy: [[5, 5, 1, 2], [8, 5, 1, 2]],
+    waiting: [[4, 5, 1, 3], [7, 5, 1, 3]],
+    idle: [[3, 6, 2, 1], [7, 6, 2, 1]],
+  };
+
+  // A pulsing pixel above the head while busy; a pixel "!" while waiting.
+  const PULSE = [[10, 2, 1, 1]];
+  const ALERT = [[11, 0, 1, 2], [11, 3, 1, 1]];
 
   function createAvatar(doc, sessionId, status) {
     const st = STATUSES.includes(status) ? status : 'idle';
+    const variant = variantIndex(sessionId);
+    const color = PALETTE[colorIndex(sessionId)];
 
     function node(tag, attrs) {
       const n = doc.createElementNS(SVG_NS, tag);
@@ -40,61 +92,45 @@
       return n;
     }
 
+    function rects(cells, cls, fill) {
+      return cells.map(([x, y, w, h]) => {
+        const attrs = { class: cls, x: String(x), y: String(y), width: String(w), height: String(h) };
+        if (fill) attrs.fill = fill;
+        return node('rect', attrs);
+      });
+    }
+
     const svg = node('svg', {
-      viewBox: '0 0 36 36',
+      viewBox: '0 0 12 12',
       width: '36',
       height: '36',
+      'shape-rendering': 'crispEdges',
       'aria-hidden': 'true',
       focusable: 'false',
     });
-    svg.classList.add('avatar', `av-${st}`);
+    svg.classList.add('avatar', `av-${st}`, `av-v${variant}`);
 
     const figure = node('g', { class: 'av-figure' });
     figure.append(
-      node('path', { class: 'av-body', d: BODY, fill: PALETTE[colorIndex(sessionId)] }),
-      node('ellipse', { class: 'av-shine', cx: '12.5', cy: '11.5', rx: '3', ry: '1.8', fill: '#ffffff', 'fill-opacity': '0.35' }),
+      ...rects(BODY, 'av-body', color),
+      ...rects(VARIANTS[variant], 'av-body av-extra', color),
+      ...rects(EYES[st], 'av-eye', EYE),
     );
-
-    if (st === 'idle') {
-      // Closed eyes: two downward arcs, and a small calm smile.
-      for (const x of [11.5, 20.5]) {
-        figure.append(node('path', { class: 'av-lid', d: `M${x} 18.5q2 2 4 0`, fill: 'none' }));
-      }
-      figure.append(node('path', { class: 'av-mouth', d: 'M16.5 24q1.5 1 3 0', fill: 'none' }));
-    } else {
-      const wide = st === 'waiting';
-      const r = wide ? 3.6 : 3;
-      const look = st === 'busy' ? 1.2 : 0; // busy glances aside
-      for (const cx of [13.5, 22.5]) {
-        figure.append(
-          node('circle', { class: 'av-eye', cx: String(cx), cy: '18', r: String(r), fill: '#ffffff' }),
-          node('circle', { class: 'av-pupil', cx: String(cx + look), cy: '18.3', r: wide ? '1.9' : '1.6' }),
-        );
-      }
-      figure.append(
-        wide
-          ? node('ellipse', { class: 'av-mouth av-mouth-o', cx: '18', cy: '25', rx: '1.4', ry: '1.6' })
-          : node('path', { class: 'av-mouth', d: 'M15.5 24q2.5 2 5 0', fill: 'none' }),
-      );
-    }
     svg.append(figure);
 
     if (st === 'busy') {
-      // A small dot that circles the blob; CSS spins the group.
-      const orbit = node('g', { class: 'av-orbit' });
-      orbit.append(node('circle', { class: 'av-dot', cx: '18', cy: '3', r: '2.2' }));
-      svg.append(orbit);
+      const pulse = node('g', { class: 'av-pulse' });
+      pulse.append(...rects(PULSE, 'av-pulse-px'));
+      svg.append(pulse);
     } else if (st === 'waiting') {
-      const bubble = node('g', { class: 'av-bubble' });
-      const mark = node('text', { class: 'av-mark', x: '29', y: '10', 'text-anchor': 'middle' });
-      mark.textContent = '!';
-      bubble.append(node('circle', { class: 'av-bubble-bg', cx: '29', cy: '7', r: '6' }), mark);
-      svg.append(bubble);
+      const alert = node('g', { class: 'av-alert' });
+      alert.append(...rects(ALERT, 'av-alert-px'));
+      svg.append(alert);
     }
     return svg;
   }
 
-  const api = { colorIndex, PALETTE, createAvatar };
+  const api = { colorIndex, variantIndex, PALETTE, createAvatar };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddleAvatar = api;
 })(typeof window !== 'undefined' ? window : globalThis);
