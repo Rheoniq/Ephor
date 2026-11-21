@@ -20,7 +20,7 @@ Plain idle sessions are never shown. "Finished" means the session went from busy
 - **Quit** (power icon, leftmost in the header): closes Huddle at once, with no confirmation. Held prompts go back to Desktop. A mis-click ends answering from the panel until you start Huddle again.
 - **Hide** (cross in the header): hides the panel, the same as the hotkey. Held prompts are released, so Desktop shows its own prompt. Hidden is not kept across restarts. The tray item "Panel hidden" shows the state and toggles it.
 - **Hotkey:** `Ctrl+Alt+H` hides and shows the panel. It ignores a hide request when nothing is on screen. If the hotkey cannot be registered, the tray shows a note and the tray item still works.
-- **Collapse:** the collapse button (or tray "Collapse panel") shrinks the panel to one pill with the session count and a "!" dot when a session waits.
+- **Collapse:** the collapse button (or tray "Collapse panel") shrinks the panel to one pill with the session count and a "!" dot when a session waits. A collapse by hand hands every open prompt back to Desktop.
   - Click the pill to expand it. Press and drag to move it (it moves only after 4 px; at least 24 px stays on screen). The pill position is not saved across restarts.
   - The expanded panel moves by its header. On expand, the panel is fitted inside the screen's work area.
   - A prompt expands the pill by itself and collapses it again afterwards, without changing the saved setting.
@@ -45,23 +45,31 @@ The panel stays above borderless full-screen windows (such as a browser video in
 
 When a session raises a prompt that Huddle can handle, its card shows it:
 
-- **`AskUserQuestion`:** the question and its option buttons, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else.
-- **Bash and PowerShell commands** of at most 600 characters: the full command, wrapped, with Allow and Deny. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
+- **`AskUserQuestion`:** the question and its option buttons, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
+- **Bash and PowerShell commands:** the whole command, wrapped, in monospace, with Allow and Deny. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
 - Clicks in the first moment after a card appears are ignored, so a stray double-click cannot answer.
 
-Every other tool (Write, Edit, MCP tools and so on) and every longer command falls through to Desktop at once. Free typing, "Other" answers and editing a command are not handled; the arrow opens the session in Desktop for those.
+A command card appears only when all of this holds:
+
+- The tool is Bash or PowerShell.
+- The command has at most 600 characters and at most 8 lines, with no 3 or more blank lines in a row.
+- `tool_input` has no keys beyond `command`, `description` and `timeout` (so `run_in_background`, `dangerouslyDisableSandbox` and the like are never approved unseen).
+- The command has no control characters (other than tab and CRLF line breaks), no invisible characters (zero-width or bidi marks) and no blank-looking characters (no-break and other wide spaces, Hangul fillers, the blank Braille pattern, variation selectors).
+
+Everything else, including Write, Edit and MCP tools, falls through to Desktop at once. Free typing, "Other" answers and editing a command are not handled; the arrow opens the session in Desktop for those.
 
 How prompts reach the panel:
 
-- The hooks fire for every Claude Code session on this machine (Desktop, CLI, IDE, SDK). Huddle matches a prompt to a shown session by the hook's `session_id`, then by transcript path. A prompt from a session Huddle does not show gets an immediate "no decision", so Desktop (or the CLI) shows its own prompt.
+- The hooks fire for every Claude Code session on this machine (Desktop, CLI, IDE, SDK). Huddle matches the hook's `session_id` against every registry session that is not dismissed (idle ones included), then the hook's transcript path. A hook from a session that is not in the registry, or that is dismissed, gets no card: an immediate "no decision", so Desktop (or the CLI) shows its own prompt.
 - One prompt per session at a time; a second one goes straight to Desktop.
 
 Desktop stays the fallback for everything:
 
 - A prompt is held at most 15 seconds (the hook timeout is 20 seconds). Then the card goes away and Desktop shows its normal prompt.
-- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel is dead or hung, the session was dismissed, or Huddle is closed.
-- Hiding the panel, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
-- If port 47821 is in use, answering is off, the tray shows "Answering off: port 47821 in use", and Huddle retries every 30 seconds.
+- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A hung panel page cannot be detected within the hold; it just means the prompt waits the full 15 seconds.
+- Hiding the panel, collapsing it by hand, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
+- A crashed panel page is reloaded after a second. A crash loop (more than 3 crashes in 60 seconds) leaves the panel blank and answering off until Huddle is restarted.
+- If port 47821 is in use, answering is off: a toast says so once per run, the tray shows "Answering off: port 47821 in use" (also in the tray tooltip), and Huddle retries every 30 seconds. Any other start failure shows "Answering off: hook server failed" and retries the same way.
 - Hook bodies over 64 KiB get no decision, so Desktop shows its own prompt.
 
 ### Hook setup and token
@@ -164,9 +172,16 @@ Right-click the Huddle tray icon and tick "Start at login". It is off by default
 - The hook `session_id` matches the session registry.
 - A hook answer to a question, and a hook allow and deny, are honored and suppress Desktop's dialog.
 
+The hook gate ran before the `Origin` and `Host` checks were added: the server now answers 403 to any request with an `Origin` header or a `Host` other than `127.0.0.1:47821`. That check has not met the real Claude Code client yet.
+
 ### Not yet verified
 
+- The `Origin`/`Host` rejection against the real Claude Code client. If the client sends an `Origin` header or another `Host`, every hook gets 403 and answering is dead without any sign; Desktop then handles every prompt.
+- The round trip with the 64-character token (the gate used a shorter test token).
 - Fall-through when Huddle is closed, and after the 15 second hold.
+- Whether Desktop shows a hook error on the instant 204 (no decision).
+- The refusal round trip: an answer main refuses brings the card back and the prompt stays held.
+- Crash recovery of the panel page, and the port retry.
 - The separator used to join multi-select answers, and the exact label Claude receives.
 - The interaction with the existing `pretool-guard` hook.
 - What Claude Code does on a refused (over 64 KiB) payload that gets no decision.
