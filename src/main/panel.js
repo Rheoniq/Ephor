@@ -46,4 +46,14 @@ function toSnapshotSession(s, steps, prompt, finished) {
   return out;
 }
 
-module.exports = { clampHeight, createSnapshotGate, toSnapshotSession, MIN_HEIGHT, MAX_HEIGHT };
+// Whether the panel shows a session. A dismissed session is never shown.
+// Otherwise it is shown when busy or waiting, when it just finished and was
+// not looked at yet, or while a hook prompt for it is pending (a hook proves
+// the session is active even if the registry still says idle). A plain idle
+// session is not shown.
+function isShown({ status, finished, hasPrompt, dismissalsVisible }) {
+  if (dismissalsVisible !== true) return false;
+  return status === 'busy' || status === 'waiting' || finished === true || hasPrompt === true;
+}
+
+module.exports = { clampHeight, createSnapshotGate, toSnapshotSession, isShown, MIN_HEIGHT, MAX_HEIGHT };

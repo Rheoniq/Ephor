@@ -2,7 +2,34 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { clampHeight, createSnapshotGate, toSnapshotSession } = require('../src/main/panel');
+const { clampHeight, createSnapshotGate, toSnapshotSession, isShown } = require('../src/main/panel');
+
+const shown = (status, o = {}) =>
+  isShown({ status, finished: false, hasPrompt: false, dismissalsVisible: true, ...o });
+
+test('isShown: busy and waiting are shown', () => {
+  assert.equal(shown('busy'), true);
+  assert.equal(shown('waiting'), true);
+});
+
+test('isShown: idle without prompt is not shown', () => {
+  assert.equal(shown('idle'), false);
+});
+
+test('isShown: idle and finished is shown', () => {
+  assert.equal(shown('idle', { finished: true }), true);
+});
+
+test('isShown: idle with a pending prompt is shown', () => {
+  assert.equal(shown('idle', { hasPrompt: true }), true);
+});
+
+test('isShown: a dismissed session is not shown, prompt or not', () => {
+  assert.equal(shown('idle', { dismissalsVisible: false }), false);
+  assert.equal(shown('idle', { dismissalsVisible: false, hasPrompt: true }), false);
+  assert.equal(shown('idle', { dismissalsVisible: false, finished: true }), false);
+  assert.equal(shown('busy', { dismissalsVisible: false }), false);
+});
 
 test('toSnapshotSession keeps only the fields the renderer uses', () => {
   const s = {

@@ -26,7 +26,7 @@ const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
 const { createGrace } = require('./grace');
 const { createFinished } = require('./finished');
-const { clampHeight, createSnapshotGate, toSnapshotSession } = require('./panel');
+const { clampHeight, createSnapshotGate, toSnapshotSession, isShown } = require('./panel');
 const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
@@ -140,14 +140,27 @@ function promptFor(sessionId) {
   return undefined;
 }
 
-// The panel shows a session that is busy or waiting, or that just finished and
-// was not looked at yet; a plain idle session is not shown. A dismissed session
-// stays hidden either way. dismissals.visible runs for every kept session (no
-// short circuit), because it records an idle status for a dismissed session.
-function isShown(s) {
-  const notDismissed = dismissals.visible(s.sessionId, s.status);
-  const active = s.status === 'busy' || s.status === 'waiting';
-  return notDismissed && (active || finished.isFinished(s.sessionId));
+// The kept sessions that are not dismissed. dismissals.visible runs for every
+// kept session, because it records an idle status for a dismissed session.
+// Hooks match against this list (a hook proves the session is active, even
+// when the registry still says idle), and holds end only when their session
+// leaves it.
+function notDismissed(kept) {
+  return kept.filter((s) => dismissals.visible(s.sessionId, s.status));
+}
+
+// The sessions the panel shows (panel.js isShown): busy, waiting, finished
+// and not looked at yet, or with a pending prompt. Runs after endStaleHolds,
+// so a session whose idle-time prompt just ended leaves the panel at once.
+function shownSessions(candidates) {
+  return candidates.filter((s) =>
+    isShown({
+      status: s.status,
+      finished: finished.isFinished(s.sessionId),
+      hasPrompt: !!promptFor(s.sessionId),
+      dismissalsVisible: true, // candidates are already filtered by dismissal
+    }),
+  );
 }
 
 // Returns all kept sessions (before visibility filtering) and the snapshot.
@@ -161,10 +174,10 @@ function buildDemoSnapshot() {
   }
   finished.update(kept);
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
-  const visible = kept.filter(isShown);
+  const visible = notDismissed(kept);
   lastKept = kept;
   lastVisible = visible;
-  const sessions = visible.map((s) =>
+  const sessions = shownSessions(visible).map((s) =>
     toSnapshotSession(s, s.steps, promptFor(s.sessionId), finished.isFinished(s.sessionId)),
   );
   return { kept, snapshot: { sessions } };
@@ -180,12 +193,13 @@ function buildSnapshot() {
   dismissals.prune(keptIds);
   finished.update(kept);
   for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
-  const visible = kept.filter(isShown);
+  const visible = notDismissed(kept);
   lastKept = kept;
   lastVisible = visible;
-  // Before the snapshot is built, so an ended hold shows no card.
+  // Before the snapshot is built, so an ended hold shows no card and an idle
+  // session whose prompt ended is no longer shown.
   endStaleHolds(visible);
-  const sessions = visible.map((s) =>
+  const sessions = shownSessions(visible).map((s) =>
     toSnapshotSession(s, safeSteps(s), promptFor(s.sessionId), finished.isFinished(s.sessionId)),
   );
   return { kept, snapshot: { sessions } };
@@ -750,17 +764,20 @@ ipcMain.handle('huddle:open', async (event, hostSessionId) => {
   if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
   const shown = lastSnapshot.sessions.find((s) => s.hostSessionId === hostSessionId);
   if (!shown) return 'failed';
-  // Using the arrow counts as looking at the session: a finished buddy leaves
-  // the panel on the next refresh.
-  if (shown.finished) {
+  let result;
+  if (DEMO) {
+    console.log(`[huddle] demo: open ${hostSessionId} (no-op)`);
+    result = 'demo';
+  } else {
+    result = await openClaudeDesktop(hostSessionId);
+  }
+  // A successful open counts as looking at the session: a finished buddy
+  // leaves the panel on the next refresh. A failed open keeps it.
+  if (result !== 'failed' && shown.finished) {
     finished.markSeen(shown.sessionId);
     scheduleRefresh();
   }
-  if (DEMO) {
-    console.log(`[huddle] demo: open ${hostSessionId} (no-op)`);
-    return 'demo';
-  }
-  return openClaudeDesktop(hostSessionId);
+  return result;
 });
 
 if (!app.requestSingleInstanceLock()) {
