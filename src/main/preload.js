@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('huddle', {
   arm(id) {
     ipcRenderer.send('huddle:arm', id);
   },
+  // Frees a held prompt by id without answering it and opens the session's
+  // app; resolves to 'ok' or 'failed' (main checks the id).
+  release(id) {
+    return ipcRenderer.invoke('huddle:release', { id });
+  },
   // Main refused an answer or an arm for this prompt id; the card comes back.
   onAnswerRefused(cb) {
     ipcRenderer.on('huddle:answer-refused', (_event, id) => cb(id));

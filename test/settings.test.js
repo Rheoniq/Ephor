@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { loadSettings, saveSettings } = require('../src/main/settings');
 
-const DEFAULTS = { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: false };
+const DEFAULTS = { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: false, holdSeconds: 60 };
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-settings-'));
@@ -20,7 +20,7 @@ test('missing file gives defaults', () => {
 
 test('valid file round-trips', () => {
   const file = path.join(tmpDir(), 'settings.json');
-  const s = { hotkey: 'Ctrl+Shift+K', quiet: true, collapsed: true, terminalAnswering: true };
+  const s = { hotkey: 'Ctrl+Shift+K', quiet: true, collapsed: true, terminalAnswering: true, holdSeconds: 30 };
   saveSettings(file, s);
   assert.deepEqual(loadSettings(file), s);
 });
@@ -28,7 +28,13 @@ test('valid file round-trips', () => {
 test('wrong types give defaults for those fields', () => {
   const file = path.join(tmpDir(), 'settings.json');
   fs.writeFileSync(file, JSON.stringify({ hotkey: 5, quiet: 'x', collapsed: true }));
-  assert.deepEqual(loadSettings(file), { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: true, terminalAnswering: false });
+  assert.deepEqual(loadSettings(file), {
+    hotkey: 'Ctrl+Alt+H',
+    quiet: false,
+    collapsed: true,
+    terminalAnswering: false,
+    holdSeconds: 60,
+  });
 });
 
 test('invalid JSON gives defaults', () => {
@@ -67,7 +73,33 @@ test('saveSettings writes terminalAnswering and only the known fields', () => {
   const file = path.join(tmpDir(), 'settings.json');
   saveSettings(file, { ...DEFAULTS, terminalAnswering: true, extra: 'x' });
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.deepEqual(raw, { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: true });
+  assert.deepEqual(raw, { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: true, holdSeconds: 60 });
   saveSettings(file, { ...DEFAULTS });
   assert.equal(loadSettings(file).terminalAnswering, false);
+});
+
+test('holdSeconds defaults to 60 and takes an integer from 5 to 300', () => {
+  const file = path.join(tmpDir(), 'settings.json');
+  for (const value of [5, 6, 60, 120, 300]) {
+    fs.writeFileSync(file, JSON.stringify({ holdSeconds: value }));
+    assert.equal(loadSettings(file).holdSeconds, value, String(value));
+  }
+  fs.writeFileSync(file, JSON.stringify({ quiet: true }));
+  assert.equal(loadSettings(file).holdSeconds, 60);
+});
+
+test('holdSeconds out of range or not an integer gives the default', () => {
+  const file = path.join(tmpDir(), 'settings.json');
+  for (const value of [4, 0, -10, 301, 1e9, 7.5, '30', null, true, [], {}]) {
+    fs.writeFileSync(file, JSON.stringify({ holdSeconds: value }));
+    assert.equal(loadSettings(file).holdSeconds, 60, JSON.stringify(value));
+  }
+});
+
+test('saveSettings keeps holdSeconds, and an invalid one is saved as the default', () => {
+  const file = path.join(tmpDir(), 'settings.json');
+  saveSettings(file, { ...DEFAULTS, holdSeconds: 45 });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).holdSeconds, 45);
+  saveSettings(file, { ...DEFAULTS, holdSeconds: 9999 });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).holdSeconds, 60);
 });

@@ -2,7 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseOpenRequest, createHostLookups, openSucceeded, MAX_OPEN_ID_LEN } = require('../src/main/open-target');
+const {
+  parseOpenRequest,
+  openTargetFor,
+  createHostLookups,
+  openSucceeded,
+  MAX_OPEN_ID_LEN,
+} = require('../src/main/open-target');
 
 const desk = { sessionId: 'a', hostSessionId: 'local_a', source: 'desktop', finished: false };
 const term = { sessionId: 'b', hostSessionId: undefined, source: 'terminal', finished: true };
@@ -617,4 +623,18 @@ test('openTerminal: no host gives not-found without a focus call', async () => {
   deps.resolve = async () => null;
   assert.equal(await openTerminal('s1', deps), 'not-found');
   assert.equal(calls.focus.length, 0);
+});
+
+test('openTargetFor: the open target of a shown session by its session id', () => {
+  assert.deepEqual(openTargetFor('a', shown), { kind: 'desktop', session: desk });
+  assert.deepEqual(openTargetFor('b', shown), { kind: 'terminal', session: term });
+});
+
+test('openTargetFor: null for an unknown, unshown or malformed session', () => {
+  assert.equal(openTargetFor('zzz', shown), null);
+  assert.equal(openTargetFor('', shown), null);
+  assert.equal(openTargetFor(undefined, shown), null);
+  assert.equal(openTargetFor('a', undefined), null);
+  // A desktop session without a hostSessionId cannot be opened.
+  assert.equal(openTargetFor('c', [{ sessionId: 'c', source: 'desktop' }]), null);
 });

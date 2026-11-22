@@ -258,15 +258,38 @@
     return { kicker: `${base}-kicker`, text: `${base}-text`, command: `${base}-command` };
   }
 
-  // The line under a card that says where else the prompt can be answered
-  // and that the card closes after the 15 s hold: the terminal for a
-  // terminal session, Claude Desktop for any other.
-  function promptHint(source) {
-    const where = source === 'terminal' ? 'the terminal' : 'Claude Desktop';
-    return `Or answer in ${where} (closes in 15 s)`;
+  // The hold of a prompt in ms, from the snapshot's `holdMs` (main's
+  // holdSeconds setting): a number from 5 s to 300 s, rounded, else the
+  // setting's default of 60 s.
+  const HOLD_MS_MIN = 5000;
+  const HOLD_MS_MAX = 300000;
+  const HOLD_MS_DEFAULT = 60000;
+
+  function holdMsOf(p) {
+    const ms = isObject(p) ? p.holdMs : undefined;
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < HOLD_MS_MIN || ms > HOLD_MS_MAX) return HOLD_MS_DEFAULT;
+    return Math.round(ms);
   }
 
-  const api = { createPromptState, refusedId, promptDomIds, promptHint, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
+  // The line under a card that says where else the prompt can be answered
+  // and that the card closes after the hold: the terminal for a terminal
+  // session, Claude Desktop for any other. holdMs as from holdMsOf.
+  function promptHint(source, holdMs) {
+    const where = source === 'terminal' ? 'the terminal' : 'Claude Desktop';
+    const seconds = Math.round(holdMsOf({ holdMs }) / 1000);
+    return `Or answer in ${where} (closes in ${seconds} s)`;
+  }
+
+  const api = {
+    createPromptState,
+    refusedId,
+    promptDomIds,
+    promptHint,
+    holdMsOf,
+    ARM_MS,
+    MIN_CONFIRM_MS,
+    MIN_AGE_MS,
+  };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddlePrompt = api;
 })(typeof window !== 'undefined' ? window : globalThis);

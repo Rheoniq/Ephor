@@ -196,11 +196,47 @@ const MIN_ANSWER_AGE_MS = 500;
 const MIN_CONFIRM_MS = 400;
 const ARM_MS = 5000;
 
+// Longest prompt id the answer, arm and release IPCs accept (ids are UUIDs).
+const MAX_PROMPT_ID_LEN = 100;
+
 // A new held prompt. `sawWaiting` starts false: only registry reads made
 // after the prompt arrived count, so a 'waiting' left from an earlier
-// dialog cannot end a fresh hold. `now` is a monotonic time in ms.
-function createHold({ id, sessionId, parsed, view, now }) {
-  return { id, sessionId, parsed, view: { id, ...view }, heldAt: now, armedAt: null, sawWaiting: false };
+// dialog cannot end a fresh hold. `now` is a monotonic time in ms. The view
+// (what the snapshot sends) carries `holdMs`, the length of the hold, so the
+// card's countdown follows the setting; `heldAt` stays in main.
+function createHold({ id, sessionId, parsed, view, now, holdMs }) {
+  return { id, sessionId, parsed, view: { id, ...view, holdMs }, heldAt: now, armedAt: null, sawWaiting: false };
+}
+
+// Frees a held prompt without a decision and opens the session's app.
+// `prompts` is main's table of held prompts (id -> entry); an id that is not
+// in it (unknown, replayed, answered or already ended) gives
+// { result: 'failed', open: null } and calls nothing. Otherwise the entry
+// leaves the table, resolve(id, null) ends the hook with 204 (so the
+// terminal's or Desktop's own prompt appears at once), and only then
+// open(entry) runs. The release stands whatever resolve or open do: the
+// result is 'ok', and `open` is a promise of open's result that never
+// rejects ('failed' on a throw or a rejection).
+function releasePrompt({ id, prompts, resolve, open }) {
+  const none = { result: 'failed', open: null };
+  if (typeof id !== 'string' || id === '' || id.length > MAX_PROMPT_ID_LEN) return none;
+  if (!(prompts instanceof Map)) return none;
+  const entry = prompts.get(id);
+  if (!entry) return none;
+  prompts.delete(id);
+  try {
+    resolve(id, null);
+  } catch {
+    // The hold is released in main either way; the server's own timeout or
+    // close handler ends the request.
+  }
+  let opened;
+  try {
+    opened = Promise.resolve(open(entry)).catch(() => 'failed');
+  } catch {
+    opened = Promise.resolve('failed');
+  }
+  return { result: 'ok', open: opened };
 }
 
 // Records the first Allow click of a permission prompt. A later arm starts
@@ -234,6 +270,8 @@ module.exports = {
   createHold,
   armHold,
   answerInTime,
+  releasePrompt,
+  MAX_PROMPT_ID_LEN,
   MIN_ANSWER_AGE_MS,
   MIN_CONFIRM_MS,
   ARM_MS,

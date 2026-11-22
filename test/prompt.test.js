@@ -2,7 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createPromptState, refusedId, promptDomIds, promptHint, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
+const {
+  createPromptState,
+  refusedId,
+  promptDomIds,
+  promptHint,
+  holdMsOf,
+  ARM_MS,
+  MIN_CONFIRM_MS,
+  MIN_AGE_MS,
+} = require('../src/renderer/prompt');
 const main = require('../src/main/answering');
 
 function question(text, labels, multiSelect = false) {
@@ -397,10 +406,39 @@ test('promptDomIds escapes every character outside letters, digits and hyphens',
   assert.notEqual(promptDomIds('a_20_b').text, promptDomIds('a b').text);
 });
 
-test('promptHint names where else the prompt can be answered', () => {
-  assert.equal(promptHint('terminal'), 'Or answer in the terminal (closes in 15 s)');
-  assert.equal(promptHint('desktop'), 'Or answer in Claude Desktop (closes in 15 s)');
+test('promptHint names where else the prompt can be answered and the hold from the payload', () => {
+  assert.equal(promptHint('terminal', 60000), 'Or answer in the terminal (closes in 60 s)');
+  assert.equal(promptHint('desktop', 15000), 'Or answer in Claude Desktop (closes in 15 s)');
   for (const odd of [undefined, null, '', 'Terminal', 42, {}]) {
-    assert.equal(promptHint(odd), 'Or answer in Claude Desktop (closes in 15 s)', String(odd));
+    assert.equal(promptHint(odd, 30000), 'Or answer in Claude Desktop (closes in 30 s)', String(odd));
   }
+  // No valid hold in the payload: the default 60 s.
+  assert.equal(promptHint('desktop'), 'Or answer in Claude Desktop (closes in 60 s)');
+});
+
+test('holdMsOf takes holdMs from the prompt payload, within 5 s to 300 s, else 60 s', () => {
+  assert.equal(holdMsOf({ holdMs: 60000 }), 60000);
+  assert.equal(holdMsOf({ holdMs: 5000 }), 5000);
+  assert.equal(holdMsOf({ holdMs: 300000 }), 300000);
+  assert.equal(holdMsOf({ holdMs: 12345.6 }), 12346);
+  for (const odd of [undefined, null, {}, { holdMs: 4999 }, { holdMs: 300001 }, { holdMs: '60000' }, { holdMs: NaN }, { holdMs: Infinity }]) {
+    assert.equal(holdMsOf(odd), 60000, JSON.stringify(odd));
+  }
+});
+
+test('the snapshot prompt from main carries holdMs and no heldAt', () => {
+  const parsed = require('../src/main/prompts').parseHook({
+    session_id: 's',
+    transcript_path: 'C:\t.jsonl',
+    cwd: 'C:\work',
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+  });
+  const view = main.promptView(parsed);
+  assert.ok(view);
+  const entry = main.createHold({ id: 'p1', sessionId: 's', parsed, view, now: 5, holdMs: 30000 });
+  assert.equal(entry.view.holdMs, 30000);
+  assert.equal('heldAt' in entry.view, false);
+  assert.equal(holdMsOf(entry.view), 30000);
 });

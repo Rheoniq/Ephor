@@ -81,7 +81,7 @@ The panel stays above borderless full-screen windows (such as a browser video in
 
 ## Answering from the panel
 
-When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop (closes in 15 s)" ("Or answer in the terminal (closes in 15 s)" for a terminal session), and a line along its bottom edge that drains over the 15 second hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
+When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop (closes in 60 s)" ("Or answer in the terminal (closes in 60 s)" for a terminal session; the number is the hold, see `holdSeconds` below), and a line along its bottom edge that drains over the hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
 
 - **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
 - **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
@@ -110,8 +110,8 @@ Terminal sessions:
 
 Desktop stays the fallback for everything:
 
-- A prompt is held at most 15 seconds (the hook timeout is 20 seconds). Then the card goes away and Desktop shows its normal prompt.
-- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A hung panel page cannot be detected within the hold; it just means the prompt waits the full 15 seconds.
+- A prompt is held at most `holdSeconds` (60 seconds by default; the hook timeout must be longer, 70 seconds in the hook setup). Then the card goes away and Desktop shows its normal prompt. A hook entry that still has the old timeout of 20 seconds ends the hold after 20 seconds, with the same safe fall-through.
+- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A hung panel page cannot be detected within the hold; it just means the prompt waits the full hold.
 - Hiding the panel, collapsing it by hand, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
 - A crashed panel page is reloaded after a second. A crash loop (more than 3 crashes in 60 seconds) leaves the panel blank and answering off until Huddle is restarted.
 - If port 47821 is in use, answering is off: a toast says so once per run, the tray shows "Answering off: port 47821 in use" (also in the tray tooltip), and Huddle retries every 30 seconds. Any other start failure shows "Answering off: hook server failed" and retries the same way.
@@ -136,10 +136,10 @@ Without the hooks or the token, Huddle works as a viewer and Desktop shows every
 Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file `hook-token`. Electron names the folder after the product name. A folder first created as `%APPDATA%\huddle` keeps that spelling; Windows ignores case, so both are the same folder.
 
 ```
-{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false }
+{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false, "holdSeconds": 60 }
 ```
 
-`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
+`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see the hook setup). Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
 
 ## Running next to the first version
 
@@ -236,7 +236,7 @@ The hook gate ran before the `Origin` and `Host` checks were added: the server n
 
 - The `Origin`/`Host` rejection against the real Claude Code client. If the client sends an `Origin` header or another `Host`, every hook gets 403 and answering is dead without any sign; Desktop then handles every prompt.
 - The round trip with the 64-character token (the gate used a shorter test token).
-- Fall-through when Huddle is closed, and after the 15 second hold.
+- Fall-through when Huddle is closed, and at the end of the hold.
 - Whether Desktop shows a hook error on the instant 204 (no decision).
 - The refusal round trip: an answer main refuses brings the card back and the prompt stays held.
 - Crash recovery of the panel page, and the port retry.

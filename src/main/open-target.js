@@ -39,6 +39,18 @@ function parseOpenRequest(payload, shown) {
   return null;
 }
 
+// The open target of a shown session by its session id, as the arrow of
+// its row would send it: { kind, session } or null. Used by the release IPC,
+// which knows the prompt's session id, not the renderer's open request.
+function openTargetFor(sessionId, shown) {
+  if (!validId(sessionId) || !Array.isArray(shown)) return null;
+  const s = shown.find((x) => x && x.sessionId === sessionId);
+  if (!s) return null;
+  return s.source === 'terminal'
+    ? parseOpenRequest({ kind: 'terminal', sessionId }, shown)
+    : parseOpenRequest({ kind: 'desktop', hostSessionId: s.hostSessionId }, shown);
+}
+
 // Whether an open result counts as looking at the session (a finished buddy
 // is then marked seen). 'not-found' and 'failed' do not.
 function openSucceeded(result) {
@@ -253,6 +265,7 @@ async function openTerminal(sessionId, { kept, resolve, focusWindowOf, folderNam
 
 module.exports = {
   parseOpenRequest,
+  openTargetFor,
   openSucceeded,
   createHostLookups,
   createOpenGate,

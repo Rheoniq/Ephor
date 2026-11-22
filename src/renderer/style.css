@@ -634,8 +634,10 @@ button:focus-visible {
 }
 
 /* Time left of the hold: a thin clay line along the card's bottom edge that
-   drains in 15 s (renderer.js keeps it in step across re-renders). Without
-   motion it stays full. Decorative: hidden from screen readers. */
+   drains over the hold (--hold-ms, set by renderer.js from the prompt's
+   holdMs; renderer.js keeps it in step across re-renders). Without motion,
+   or without --hold-ms, it stays full. Decorative: hidden from screen
+   readers. */
 .prompt-drain {
   position: absolute;
   left: 0;
@@ -755,8 +757,9 @@ button:focus-visible {
   /* The active plan step's ring turns; with reduced motion it stands still. */
   .mark-spinner { animation: spin 1s linear infinite; }
 
-  /* 15 s: main's hold (main.js HOLD_MS), after which Desktop takes over. */
-  .prompt-drain { animation: prompt-drain 15s linear forwards; }
+  /* main's hold (setting holdSeconds), after which Desktop or the terminal
+     takes over; the value comes with each prompt. */
+  .prompt-drain { animation: prompt-drain var(--hold-ms) linear forwards; }
 }
 
 @keyframes spin {

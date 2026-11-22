@@ -33,6 +33,9 @@
   // Prompt id -> performance.now() when this page first showed it. The line
   // that drains over the hold runs from there, across re-renders.
   const promptSeen = new Map();
+  // Prompt id -> the hold in ms from the snapshot's holdMs (HuddlePrompt
+  // holdMsOf), for the drain line's duration and the hint.
+  const promptHold = new Map();
   let sessions = [];
   // Avatar colors (task 3): sessionId -> palette index, so no two visible
   // sessions share a color. Updated on each render by HuddleColors.
@@ -129,7 +132,7 @@
 
   // The frame every prompt card shares: a small kicker naming where it comes
   // from, then the card's own content, then the hint (which also says the
-  // card closes after the 15 s hold, in words everyone gets) and the line
+  // card closes after the hold, in words everyone gets) and the line
   // that drains over the hold (decorative: hidden from screen readers, and
   // still when motion is reduced). The group is named by the kicker and
   // described by the elements whose ids are in describedBy (the question or
@@ -143,12 +146,25 @@
     card.setAttribute('role', 'group');
     card.setAttribute('aria-labelledby', kick.id);
     card.setAttribute('aria-describedby', describedBy.join(' '));
+    const holdMs = promptHold.has(id) ? promptHold.get(id) : window.HuddlePrompt.holdMsOf(null);
     const drain = el('span', 'prompt-drain');
     drain.setAttribute('aria-hidden', 'true');
     drain.dataset.promptId = id;
-    const hint = el('p', 'prompt-hint', window.HuddlePrompt.promptHint(source));
+    drain.dataset.holdMs = String(holdMs);
+    // The drain runs over the hold from the payload (style.css reads
+    // --hold-ms). Set through the CSSOM, which the CSP allows.
+    drain.style.setProperty('--hold-ms', `${holdMs}ms`);
+    const hint = el('p', 'prompt-hint', window.HuddlePrompt.promptHint(source, holdMs));
     card.append(kick, ...content, hint, drain);
     return card;
+  }
+
+  // Frees a held prompt without answering it, so it can be answered in the
+  // session's own app, which main then opens. Main ends the hold and the
+  // next snapshot drops the card. (The button that calls this comes with the
+  // session view.)
+  function releasePrompt(id) {
+    window.huddle.release(id).catch(() => 'failed');
   }
 
   function sendAnswers(id, result) {
@@ -257,6 +273,7 @@
   // source is the session's ('terminal' or 'desktop'), for the hint.
   function renderPrompt(prompt, sessionName, source) {
     const st = promptStateFor(prompt);
+    if (st) promptHold.set(prompt.id, window.HuddlePrompt.holdMsOf(prompt));
     const view = st && st.current();
     // An answered card is hidden at once. If main refuses the answer (it
     // does not fit, or its timing is off), it says so and the card comes
@@ -468,6 +485,7 @@
     const promptIds = new Set(sessions.map((s) => (s && s.prompt ? s.prompt.id : null)));
     for (const id of promptStates.keys()) if (!promptIds.has(id)) promptStates.delete(id);
     for (const id of promptSeen.keys()) if (!promptIds.has(id)) promptSeen.delete(id);
+    for (const id of promptHold.keys()) if (!promptIds.has(id)) promptHold.delete(id);
 
     count.textContent = sessions.length ? String(sessions.length) : '';
     panel.classList.toggle('collapsed', collapsed);

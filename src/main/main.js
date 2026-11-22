@@ -26,6 +26,7 @@ const { openClaudeDesktop, focusWindowOf } = require('./focus');
 const { createHostResolver, loadProcessTable, windowsOf, folderNameOf } = require('./host');
 const {
   parseOpenRequest,
+  openTargetFor,
   openSucceeded,
   createHostLookups,
   createOpenGate,
@@ -60,6 +61,7 @@ const {
   createHold,
   armHold,
   answerInTime,
+  releasePrompt,
 } = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
 const { createControls, hideTitle } = require('./controls');
@@ -98,10 +100,13 @@ const TOAST_GAP = 8;
 const TOAST_MS = 4000;
 
 // Answering prompts from the panel: Claude Code http hooks post to this
-// localhost port. A held hook ends after HOLD_MS with no decision, so
-// Desktop's own prompt takes over within the 20 s hook timeout.
+// localhost port. A held hook ends after holdMs with no decision, so
+// Desktop's or the terminal's own prompt takes over; the hook entries'
+// timeout must be longer than the hold (see docs/superpowers/notes).
+// holdMs is the setting holdSeconds, read once at startup (a change needs a
+// restart); until then the default applies.
 const HOOK_PORT = 47821;
-const HOLD_MS = 15000;
+let holdMs = SETTINGS_DEFAULTS.holdSeconds * 1000;
 const TOKEN_FILE = 'hook-token';
 const MAX_PROMPT_ID_LEN = 100;
 // While the port is taken (or the server failed to start), listening is
@@ -312,7 +317,7 @@ function endStaleHolds(visible) {
 }
 
 // Hiding or hand-collapsing the panel, turning quiet on, or a dead or hung
-// panel page ends every hold at once instead of after HOLD_MS.
+// panel page ends every hold at once instead of after holdMs.
 function cancelAllHolds() {
   if (!hookServer || prompts.size === 0) return;
   for (const entry of [...prompts.values()]) cancelHold(entry);
@@ -352,7 +357,7 @@ function onPrompt({ id, sessionId, parsed }) {
   const view = promptView(parsed);
   // A throw makes the server end the hold with 204.
   if (!view) throw new Error('prompt cannot be shown');
-  prompts.set(id, createHold({ id, sessionId, parsed, view, now: performance.now() }));
+  prompts.set(id, createHold({ id, sessionId, parsed, view, now: performance.now(), holdMs }));
   console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
   // A collapsed pill opens so the card can be seen; it closes again when no
   // hold is left (afterHoldEnded). Not persisted.
@@ -399,7 +404,7 @@ async function startAnswering() {
   answerServer = createHookServer({
     token: hookToken,
     port: HOOK_PORT,
-    holdMs: HOLD_MS,
+    holdMs,
     canHold: canHoldPrompts,
     findBuddy,
     onPrompt,
@@ -456,7 +461,9 @@ function loadDemoPrompts() {
   for (const { id, body } of demoPrompts()) {
     const parsed = parseHook(body);
     const view = promptView(parsed);
-    if (view) prompts.set(id, createHold({ id, sessionId: parsed.sessionId, parsed, view, now: performance.now() }));
+    if (view) {
+      prompts.set(id, createHold({ id, sessionId: parsed.sessionId, parsed, view, now: performance.now(), holdMs }));
+    }
   }
 }
 
@@ -1168,6 +1175,44 @@ ipcMain.handle('huddle:open', async (event, request) => {
 
 const openGate = createOpenGate((_key, target) => runOpen(target), { maxConcurrent: 2 });
 
+// "Answer it there yourself" on a prompt card: { id }. Only a prompt still
+// held counts (a replayed, unknown, answered or ended id gets 'failed' and
+// touches nothing). The hook ends at once with no decision (204), so the
+// terminal's or Desktop's own prompt appears, and then the session's app
+// opens through the arrow's gated open. An open that fails never undoes the
+// release: the answer is 'ok' once the hold is freed. No 500 ms guard: a
+// release answers nothing.
+ipcMain.handle('huddle:release', (event, payload) => {
+  if (!fromOurWindow(event)) return 'failed';
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return 'failed';
+  const id = payload.id;
+  if (typeof id !== 'string' || id.length > MAX_PROMPT_ID_LEN) return 'failed';
+  const released = releasePrompt({
+    id,
+    prompts,
+    resolve: (promptId) => {
+      if (DEMO) console.log('[huddle] demo: prompt released (no hook to end)');
+      else if (hookServer) hookServer.resolve(promptId, null);
+    },
+    open: (entry) => {
+      // The prompt's session as the last snapshot shows it, opened as its
+      // row's arrow would open it.
+      const target = openTargetFor(entry.sessionId, lastSnapshot.sessions);
+      if (!target) return 'failed';
+      const key = target.kind === 'desktop' ? target.session.hostSessionId : target.session.sessionId;
+      return openGate.open(`${target.kind}:${key}`, target);
+    },
+  });
+  if (released.result !== 'ok') return 'failed';
+  console.log('[huddle] prompt released to its own app');
+  afterHoldEnded();
+  scheduleRefresh();
+  released.open.then((result) => {
+    if (result === 'failed' || result === 'not-found') console.log(`[huddle] open after release: ${result}`);
+  });
+  return 'ok';
+});
+
 async function runOpen(target) {
   const shown = target.session;
   let result;
@@ -1209,8 +1254,12 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (DEMO_THEME === 'dark' || DEMO_THEME === 'light') nativeTheme.themeSource = DEMO_THEME;
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
-    // Demo mode neither reads nor writes the real settings file.
-    settings = DEMO ? { ...SETTINGS_DEFAULTS } : loadSettings(settingsFile);
+    // Demo mode never writes the settings file and reads only holdSeconds
+    // from it (so a demo run with its own --user-data-dir can try a hold).
+    settings = DEMO
+      ? { ...SETTINGS_DEFAULTS, holdSeconds: loadSettings(settingsFile).holdSeconds }
+      : loadSettings(settingsFile);
+    holdMs = settings.holdSeconds * 1000;
     visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
     registerHotkey();
     if (DEMO) loadDemoPrompts();

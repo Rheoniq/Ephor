@@ -4,11 +4,26 @@
 // when the file is missing, unreadable, malformed or holds a wrong type.
 // terminalAnswering: prompt cards for terminal sessions (off until the live
 // check of hook answers in a terminal has passed).
+// holdSeconds: how long a prompt card holds a hook before Desktop or the
+// terminal takes over; an integer from 5 to 300, else 60. Read at startup,
+// so a change needs a restart.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-const DEFAULTS = Object.freeze({ hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: false });
+const HOLD_SECONDS_MIN = 5;
+const HOLD_SECONDS_MAX = 300;
+const DEFAULTS = Object.freeze({
+  hotkey: 'Ctrl+Alt+H',
+  quiet: false,
+  collapsed: false,
+  terminalAnswering: false,
+  holdSeconds: 60,
+});
+
+function validHoldSeconds(value) {
+  return Number.isInteger(value) && value >= HOLD_SECONDS_MIN && value <= HOLD_SECONDS_MAX;
+}
 
 function loadSettings(file) {
   let raw = null;
@@ -24,6 +39,7 @@ function loadSettings(file) {
     collapsed: typeof obj.collapsed === 'boolean' ? obj.collapsed : DEFAULTS.collapsed,
     terminalAnswering:
       typeof obj.terminalAnswering === 'boolean' ? obj.terminalAnswering : DEFAULTS.terminalAnswering,
+    holdSeconds: validHoldSeconds(obj.holdSeconds) ? obj.holdSeconds : DEFAULTS.holdSeconds,
   };
 }
 
@@ -35,6 +51,7 @@ function saveSettings(file, s) {
       quiet: s.quiet,
       collapsed: s.collapsed,
       terminalAnswering: s.terminalAnswering === true,
+      holdSeconds: validHoldSeconds(s.holdSeconds) ? s.holdSeconds : DEFAULTS.holdSeconds,
     };
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
   } catch (err) {
@@ -42,4 +59,4 @@ function saveSettings(file, s) {
   }
 }
 
-module.exports = { loadSettings, saveSettings, DEFAULTS };
+module.exports = { loadSettings, saveSettings, DEFAULTS, HOLD_SECONDS_MIN, HOLD_SECONDS_MAX };

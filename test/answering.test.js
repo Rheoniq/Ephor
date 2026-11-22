@@ -14,6 +14,8 @@ const {
   createHold,
   armHold,
   answerInTime,
+  releasePrompt,
+  MAX_PROMPT_ID_LEN,
   MIN_ANSWER_AGE_MS,
   MIN_CONFIRM_MS,
   ARM_MS,
@@ -319,7 +321,7 @@ test('holdState: a hidden buddy or a panel that cannot hold cancels', () => {
 
 function hold(kind = 'permission', heldAt = 10000) {
   const parsed = kind === 'ask' ? askParsed([q('Q?', ['A', 'B'])]) : permParsed();
-  return createHold({ id: 'p1', sessionId: SESSION, parsed, view: promptView(parsed), now: heldAt });
+  return createHold({ id: 'p1', sessionId: SESSION, parsed, view: promptView(parsed), now: heldAt, holdMs: 60000 });
 }
 
 test('timing constants', () => {
@@ -335,7 +337,7 @@ test('createHold starts unarmed and with no waiting seen, whatever the registry 
   assert.equal(entry.heldAt, 10000);
   assert.equal(entry.armedAt, null);
   assert.equal(entry.sawWaiting, false);
-  assert.deepEqual(entry.view, { id: 'p1', ...promptView(entry.parsed) });
+  assert.deepEqual(entry.view, { id: 'p1', ...promptView(entry.parsed), holdMs: 60000 });
   // A stale 'waiting' from an earlier dialog was read before the prompt
   // arrived and is not counted: the first read after it says busy, no cancel.
   assert.equal(holdState(entry, { status: 'busy', visible: true, canHold: true }).cancel, false);
@@ -463,4 +465,83 @@ test('buddyFor: a prompt the card cannot show gets no buddy', () => {
   assert.equal(buddyFor(write, ctx), null);
   assert.equal(buddyFor(null, ctx), null);
   assert.equal(buddyFor(hookAsk(DB.sessionId), null), null);
+});
+
+// --- releasePrompt ---
+
+function releaseSetup() {
+  const calls = [];
+  const prompts = new Map([['p1', hold('ask')]]);
+  const resolve = (id, response) => calls.push(['resolve', id, response]);
+  const open = (entry) => {
+    calls.push(['open', entry.id]);
+    return Promise.resolve('opened');
+  };
+  return { calls, prompts, resolve, open };
+}
+
+test('releasePrompt: an unknown, empty, overlong or non-string id gives failed and calls nothing', () => {
+  const { calls, prompts, resolve, open } = releaseSetup();
+  for (const id of ['nope', '', 'x'.repeat(MAX_PROMPT_ID_LEN + 1), undefined, null, 7, { id: 'p1' }]) {
+    const r = releasePrompt({ id, prompts, resolve, open });
+    assert.equal(r.result, 'failed', JSON.stringify(id));
+    assert.equal(r.open, null);
+  }
+  assert.deepEqual(calls, []);
+  assert.equal(prompts.size, 1);
+});
+
+test('releasePrompt: a held id is resolved with no decision before the open, and leaves the table', async () => {
+  const { calls, prompts, resolve, open } = releaseSetup();
+  const r = releasePrompt({ id: 'p1', prompts, resolve, open });
+  assert.equal(r.result, 'ok');
+  assert.equal(prompts.has('p1'), false);
+  assert.deepEqual(calls, [
+    ['resolve', 'p1', null],
+    ['open', 'p1'],
+  ]);
+  assert.equal(await r.open, 'opened');
+});
+
+test('releasePrompt: an open that fails, rejects or throws still releases', async () => {
+  for (const open of [
+    () => Promise.resolve('failed'),
+    () => Promise.reject(new Error('x')),
+    () => {
+      throw new Error('x');
+    },
+  ]) {
+    const { prompts, resolve } = releaseSetup();
+    const r = releasePrompt({ id: 'p1', prompts, resolve, open });
+    assert.equal(r.result, 'ok');
+    assert.equal(prompts.has('p1'), false);
+    assert.equal(await r.open, 'failed');
+  }
+});
+
+test('releasePrompt: a resolve that throws still releases and still opens', async () => {
+  const { prompts, open } = releaseSetup();
+  const r = releasePrompt({
+    id: 'p1',
+    prompts,
+    resolve: () => {
+      throw new Error('x');
+    },
+    open,
+  });
+  assert.equal(r.result, 'ok');
+  assert.equal(await r.open, 'opened');
+});
+
+test('releasePrompt: a replay of the same id, or a prompt already answered, is ignored', () => {
+  const { calls, prompts, resolve, open } = releaseSetup();
+  assert.equal(releasePrompt({ id: 'p1', prompts, resolve, open }).result, 'ok');
+  calls.length = 0;
+  assert.equal(releasePrompt({ id: 'p1', prompts, resolve, open }).result, 'failed');
+  assert.deepEqual(calls, []);
+  // An answered prompt is no longer in the table (main deletes it on answer).
+  const other = releaseSetup();
+  other.prompts.delete('p1');
+  assert.equal(releasePrompt({ id: 'p1', prompts: other.prompts, resolve: other.resolve, open: other.open }).result, 'failed');
+  assert.deepEqual(other.calls, []);
 });
