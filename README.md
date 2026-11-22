@@ -48,7 +48,7 @@ Claude Code sessions running in Zed, VS Code, Cursor, JetBrains or any terminal 
 - **Arrow:** "Open in <host>" brings that program's window to the front, restoring it when minimized. It picks the window whose title shows the session's folder name (see [Limits](#limits)). When the host is not known yet, the arrow looks it up on the click.
 - **No progress bar:** the plan comes from Claude Desktop's plan tool, which terminal sessions do not have. A terminal session shows its status label and, expanded, the last command it requested.
 - **Prompt cards** are off for terminal sessions by default (see [Answering from the panel](#answering-from-the-panel)).
-- A registry file left behind by a crashed session whose process id now belongs to another program is dropped as soon as the host lookup proves it stale. When two registry files name the same session, the one updated last counts.
+- A registry file left behind by a crashed session is dropped as soon as the host lookup proves it stale: its process id is missing from the process table, or a Claude process on that id started at another time (seen on two table reads in a row). Each drop is logged with the first 8 characters of the session id, the process id and the reason. A process id held by another program is not proof: that session stays, without a badge. When two registry files name the same session, the one updated last counts among those not proven stale.
 
 ## Panel controls
 
@@ -150,7 +150,7 @@ Both versions use the app name Huddle, so they share the settings folder and the
 
 Huddle only reads local files; it never writes to them.
 
-- Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped, and so are entries whose `pidDomain` names something other than Windows (`win32`). When two files name the same session, the one with the newest `updatedAt` counts.
+- Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped, and so are entries whose `pidDomain` is text that does not start with `win32` (WSL, another machine). An entry whose `pidDomain` is missing, `null` or not text is kept. When two files name the same session, the one with the newest `updatedAt` among those not proven stale counts.
 - Host of a terminal session: one process table (pid, parent pid, name and start time of each process, through PowerShell's `Get-CimInstance Win32_Process`, cached for 5 seconds) and the visible windows of the programs above the session's process. Both run off the refresh path.
 - Plan and last command: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan and the latest shell command are found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped. A file that was rewritten rather than appended to, or that grew by more than 8 MiB, is read again from the end.
 
@@ -218,7 +218,7 @@ Terminal sessions:
 
 - The arrow picks the window by the session's folder name (the last part of its working directory) in the window title, as a whole name and ignoring case: "Huddle" matches "Huddle - README.md" or "~/code/Huddle/src", not "Huddle-terminal" or "Old-Huddle". Among several matching windows a normal one wins, then the topmost. With no match, the host's window is used only when it has exactly one normal window; otherwise the result is "not-found" and the arrow does nothing.
 - The arrow brings the window forward but cannot select a tab or a split inside it.
-- A click takes about 1 second (two PowerShell calls).
+- A click takes about one to two seconds, an estimate: a process-list read when the cache is older than 5 s, then a window list and the focus call; each PowerShell call compiles a small helper.
 - The badge and the arrow need Windows PowerShell 5.1 with `Add-Type` allowed. Under Constrained Language Mode or app control (AppLocker, WDAC) there is no badge and the arrow does nothing.
 - A session whose registry entry names a pid domain other than Windows (WSL, another machine) is not listed. A session whose host cannot be resolved (for example one running in WSL) gets no badge.
 - Terminal sessions get no progress bar: the plan comes from Desktop's plan tool. They show the status label and the last command.
