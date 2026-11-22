@@ -109,4 +109,61 @@ function createHostLookups({ resolve, now = Date.now, onResolved, retryMs = RETR
   return { hostFor, prune };
 }
 
-module.exports = { parseOpenRequest, openSucceeded, createHostLookups, MAX_OPEN_ID_LEN, RETRY_NULL_MS };
+// Guards the arrow against click spam. open(key, ...args) runs
+// run(key, ...args) once per key at a time: a caller for a key that is still
+// running gets the same promise. At most maxConcurrent different keys run at
+// once; a caller for another key over the cap gets 'failed' at once (no
+// queue, so a looping renderer cannot pile up PowerShell runs). A run that
+// throws or rejects gives 'failed'; the key and the cap slot are released
+// when the run settles, whatever the outcome.
+function createOpenGate(run, { maxConcurrent = 2 } = {}) {
+  const inflight = new Map(); // key -> promise
+
+  function open(key, ...args) {
+    const pending = inflight.get(key);
+    if (pending) return pending;
+    if (inflight.size >= maxConcurrent) return Promise.resolve('failed');
+    // run starts now (not on a later tick), so the cap counts it at once.
+    let started;
+    try {
+      started = Promise.resolve(run(key, ...args));
+    } catch (err) {
+      started = Promise.reject(err);
+    }
+    const p = started
+      .catch(() => 'failed')
+      .finally(() => {
+        if (inflight.get(key) === p) inflight.delete(key);
+      });
+    inflight.set(key, p);
+    return p;
+  }
+
+  return { open };
+}
+
+// Brings the window that hosts a terminal session to the front. Only the
+// session id comes from the renderer: pid, cwd and procStart are read from
+// `kept` (main's own registry copy). The host is resolved again on the click
+// (revalidate), so a stale badge never decides. Gives 'focused', 'not-found'
+// (no host or no window) or 'failed'. Deps: { kept, resolve, focusWindowOf,
+// folderNameOf }.
+async function openTerminal(sessionId, { kept, resolve, focusWindowOf, folderNameOf } = {}) {
+  if (typeof sessionId !== 'string' || sessionId === '') return 'failed';
+  if (!Array.isArray(kept) || typeof resolve !== 'function') return 'failed';
+  const reg = kept.find((s) => s && s.sessionId === sessionId && s.source === 'terminal');
+  if (!reg) return 'failed';
+  const host = await resolve(reg.pid, reg.procStart, { revalidate: true });
+  if (!host) return 'not-found';
+  return focusWindowOf({ ownerPid: host.ownerPid, folderName: folderNameOf(reg.cwd) });
+}
+
+module.exports = {
+  parseOpenRequest,
+  openSucceeded,
+  createHostLookups,
+  createOpenGate,
+  openTerminal,
+  MAX_OPEN_ID_LEN,
+  RETRY_NULL_MS,
+};

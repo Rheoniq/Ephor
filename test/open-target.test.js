@@ -255,3 +255,154 @@ test('host lookups: bad session values give null without a resolve', () => {
   }
   assert.equal(h.calls.length, 0);
 });
+
+// --- open gate ---------------------------------------------------------------
+
+const { createOpenGate, openTerminal } = require('../src/main/open-target');
+
+test('open gate: the same key shares one in-flight promise and one run', async () => {
+  const runs = [];
+  const d = deferred();
+  const gate = createOpenGate((key) => {
+    runs.push(key);
+    return d.promise;
+  });
+  const a = gate.open('t:s1');
+  const b = gate.open('t:s1');
+  assert.equal(a, b);
+  assert.equal(runs.length, 1);
+  d.resolve('focused');
+  assert.equal(await a, 'focused');
+});
+
+test('open gate: different keys run in parallel up to the cap, extra callers get failed at once', async () => {
+  const runs = [];
+  const ds = [];
+  const gate = createOpenGate(
+    (key) => {
+      runs.push(key);
+      const d = deferred();
+      ds.push(d);
+      return d.promise;
+    },
+    { maxConcurrent: 2 },
+  );
+  const a = gate.open('a');
+  const b = gate.open('b');
+  assert.equal(await gate.open('c'), 'failed');
+  assert.deepEqual(runs, ['a', 'b']);
+  // A caller for a running key still shares its promise over the cap.
+  assert.equal(gate.open('a'), a);
+  ds[0].resolve('focused');
+  await a;
+  const c = gate.open('c');
+  assert.deepEqual(runs, ['a', 'b', 'c']);
+  ds[1].resolve('ok');
+  ds[2].resolve('focused');
+  assert.equal(await b, 'ok');
+  assert.equal(await c, 'focused');
+});
+
+test('open gate: the entry is cleared after a settle, so a later click runs again', async () => {
+  let n = 0;
+  const gate = createOpenGate(async () => {
+    n += 1;
+    return 'focused';
+  });
+  await gate.open('a');
+  await gate.open('a');
+  assert.equal(n, 2);
+});
+
+test('open gate: a rejecting run gives failed and clears the key', async () => {
+  let n = 0;
+  const gate = createOpenGate(async () => {
+    n += 1;
+    throw new Error('x');
+  });
+  assert.equal(await gate.open('a'), 'failed');
+  assert.equal(await gate.open('a'), 'failed');
+  assert.equal(n, 2);
+});
+
+test('open gate: a synchronously throwing run never leaves the key stuck or the cap used', async () => {
+  let n = 0;
+  const gate = createOpenGate(
+    () => {
+      n += 1;
+      throw new Error('sync');
+    },
+    { maxConcurrent: 1 },
+  );
+  assert.equal(await gate.open('a'), 'failed');
+  assert.equal(await gate.open('b'), 'failed');
+  assert.equal(n, 2);
+});
+
+test('open gate: passes the extra arguments to run', async () => {
+  const gate = createOpenGate(async (key, x, y) => `${key}${x}${y}`);
+  assert.equal(await gate.open('k', 1, 2), 'k12');
+});
+
+// --- openTerminal --------------------------------------------------------------
+
+function terminalDeps(kept) {
+  const calls = { resolve: [], focus: [], folder: [] };
+  return {
+    calls,
+    deps: {
+      kept,
+      resolve: async (pid, startKey, options) => {
+        calls.resolve.push({ pid, startKey, options });
+        return { name: 'Zed', ownerPid: 900 };
+      },
+      focusWindowOf: async (arg) => {
+        calls.focus.push(arg);
+        return 'focused';
+      },
+      folderNameOf: (cwd) => {
+        calls.folder.push(cwd);
+        return 'B.R.I.A.N';
+      },
+    },
+  };
+}
+
+const REG = { sessionId: 's1', source: 'terminal', pid: 31808, cwd: 'C:/Users/x/B.R.I.A.N', procStart: START };
+
+test('openTerminal: pid, cwd and procStart come from main registry copy only', async () => {
+  const { calls, deps } = terminalDeps([REG]);
+  // A shown snapshot entry or payload carrying its own pid, cwd or procStart
+  // has no say: openTerminal takes only the session id.
+  const result = await openTerminal('s1', deps);
+  assert.equal(result, 'focused');
+  assert.deepEqual(calls.resolve, [{ pid: 31808, startKey: START, options: { revalidate: true } }]);
+  assert.equal(typeof calls.resolve[0].startKey, 'string');
+  assert.deepEqual(calls.folder, ['C:/Users/x/B.R.I.A.N']);
+  assert.deepEqual(calls.focus, [{ ownerPid: 900, folderName: 'B.R.I.A.N' }]);
+});
+
+test('openTerminal: an object id never matches (no payload fields reach the lookup)', async () => {
+  const { calls, deps } = terminalDeps([REG]);
+  assert.equal(await openTerminal({ sessionId: 's1', pid: 4, cwd: 'C:/evil', procStart: '1' }, deps), 'failed');
+  assert.equal(calls.resolve.length, 0);
+  assert.equal(calls.focus.length, 0);
+});
+
+test('openTerminal: an unknown or non-terminal session gives failed without calling the resolver', async () => {
+  const desk = { sessionId: 'd1', source: 'desktop', pid: 5, cwd: 'C:/d', procStart: START };
+  const { calls, deps } = terminalDeps([REG, desk]);
+  assert.equal(await openTerminal('nope', deps), 'failed');
+  assert.equal(await openTerminal('d1', deps), 'failed');
+  assert.equal(await openTerminal('s1', { ...deps, kept: undefined }), 'failed');
+  assert.equal(await openTerminal('s1', { ...deps, resolve: undefined }), 'failed');
+  assert.equal(calls.resolve.length, 0);
+  assert.equal(calls.focus.length, 0);
+});
+
+test('openTerminal: no host gives not-found without a focus call', async () => {
+  const { calls, deps } = terminalDeps([REG]);
+  deps.resolve = async () => null;
+  assert.equal(await openTerminal('s1', deps), 'not-found');
+  assert.equal(calls.focus.length, 0);
+});

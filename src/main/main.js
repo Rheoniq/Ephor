@@ -24,7 +24,13 @@ const { createDismissals } = require('./dismissals');
 const { transcriptPath } = require('./paths');
 const { openClaudeDesktop, focusWindowOf } = require('./focus');
 const { createHostResolver, loadProcessTable, windowsOf, folderNameOf } = require('./host');
-const { parseOpenRequest, openSucceeded, createHostLookups } = require('./open-target');
+const {
+  parseOpenRequest,
+  openSucceeded,
+  createHostLookups,
+  createOpenGate,
+  openTerminal,
+} = require('./open-target');
 const { createGrace } = require('./grace');
 const { createFinished } = require('./finished');
 const {
@@ -1113,11 +1119,19 @@ ipcMain.on('huddle:answer', (event, payload) => {
 // to the front (an older plain hostSessionId string still means desktop).
 // Only an id from the last snapshot counts. For a terminal session the pid,
 // cwd and procStart come from main's own registry copy, never from the
-// renderer.
+// renderer. Fast repeated clicks on one session share one open, and at most
+// two sessions open at once; a click for a third gets 'failed' at once.
 ipcMain.handle('huddle:open', async (event, request) => {
   if (!fromOurWindow(event)) return 'failed';
   const target = parseOpenRequest(request, lastSnapshot.sessions);
   if (!target) return 'failed';
+  const id = target.kind === 'desktop' ? target.session.hostSessionId : target.session.sessionId;
+  return openGate.open(`${target.kind}:${id}`, target);
+});
+
+const openGate = createOpenGate((_key, target) => runOpen(target), { maxConcurrent: 2 });
+
+async function runOpen(target) {
   const shown = target.session;
   let result;
   if (DEMO) {
@@ -1126,7 +1140,12 @@ ipcMain.handle('huddle:open', async (event, request) => {
   } else if (target.kind === 'desktop') {
     result = await openClaudeDesktop(shown.hostSessionId);
   } else {
-    result = await openTerminalSession(shown.sessionId);
+    result = await openTerminal(shown.sessionId, {
+      kept: lastKept,
+      resolve: hostResolver ? (pid, startKey, options) => hostResolver.resolve(pid, startKey, options) : undefined,
+      focusWindowOf,
+      folderNameOf,
+    });
   }
   // A successful open counts as looking at the session: a finished buddy
   // leaves the panel on the next refresh. A failed open, or a host window
@@ -1136,17 +1155,6 @@ ipcMain.handle('huddle:open', async (event, request) => {
     scheduleRefresh();
   }
   return result;
-});
-
-// Brings the window that hosts a terminal session to the front:
-// 'focused', 'not-found' (no host or no window) or 'failed'. The host is
-// resolved again on the click (revalidate), so a stale badge never decides.
-async function openTerminalSession(sessionId) {
-  const reg = lastKept.find((s) => s.sessionId === sessionId && s.source === 'terminal');
-  if (!reg || !hostResolver) return 'failed';
-  const host = await hostResolver.resolve(reg.pid, reg.procStart, { revalidate: true });
-  if (!host) return 'not-found';
-  return focusWindowOf({ ownerPid: host.ownerPid, folderName: folderNameOf(reg.cwd) });
 }
 
 if (!app.requestSingleInstanceLock()) {
