@@ -8,6 +8,8 @@ const {
   promptView,
   buildResponse,
   matchBuddy,
+  canAnswerFor,
+  buddyFor,
   holdState,
   createHold,
   armHold,
@@ -388,4 +390,77 @@ test('armHold: refused for a young card and for an ask', () => {
   assert.equal(armHold(asking, 11000), false);
   assert.equal(asking.armedAt, null);
   assert.equal(armHold(null, 11000), false);
+});
+
+// --- canAnswerFor and buddyFor: terminal sessions behind terminalAnswering ---
+
+test('canAnswerFor: desktop sessions always, terminal sessions only with terminalAnswering true', () => {
+  const desk = { sessionId: 'd', source: 'desktop' };
+  const term = { sessionId: 't', source: 'terminal' };
+  assert.equal(canAnswerFor(desk, { terminalAnswering: false }), true);
+  assert.equal(canAnswerFor(desk, { terminalAnswering: true }), true);
+  assert.equal(canAnswerFor(desk, undefined), true);
+  assert.equal(canAnswerFor(term, { terminalAnswering: true }), true);
+  for (const settings of [{ terminalAnswering: false }, {}, undefined, null, { terminalAnswering: 'true' }, { terminalAnswering: 1 }]) {
+    assert.equal(canAnswerFor(term, settings), false, JSON.stringify(settings));
+  }
+});
+
+test('canAnswerFor: no session, or a session without a source other than terminal, is decided safely', () => {
+  assert.equal(canAnswerFor(undefined, { terminalAnswering: true }), false);
+  assert.equal(canAnswerFor(null, { terminalAnswering: true }), false);
+  assert.equal(canAnswerFor('x', { terminalAnswering: true }), false);
+  // Registry sessions always carry a source; one without counts as desktop
+  // like toSnapshotSession does.
+  assert.equal(canAnswerFor({ sessionId: 'x' }, { terminalAnswering: false }), true);
+});
+
+const TA = { ...A, source: 'terminal' };
+const DB = { ...B, source: 'desktop' };
+
+function hookAsk(sessionId) {
+  return parseHook({
+    session_id: sessionId,
+    hook_event_name: 'PreToolUse',
+    tool_name: 'AskUserQuestion',
+    tool_input: { questions: [q('Pick one?', ['a', 'b'])] },
+  });
+}
+
+test('buddyFor: a terminal session gets no buddy while terminalAnswering is off', () => {
+  const ctx = { kept: [TA, DB], visible: [TA, DB], home: HOME };
+  assert.equal(buddyFor(hookAsk(TA.sessionId), { ...ctx, settings: { terminalAnswering: false } }), null);
+  assert.equal(buddyFor(hookAsk(TA.sessionId), { ...ctx, settings: {} }), null);
+  assert.equal(buddyFor(hookAsk(TA.sessionId), ctx), null);
+  // Also when it is found by its transcript path.
+  const tp = transcriptPath(HOME, TA.cwd, TA.sessionId);
+  const byPath = { ...hookAsk('other'), transcriptPath: tp };
+  assert.equal(buddyFor(byPath, { ...ctx, settings: { terminalAnswering: false } }), null);
+  assert.equal(buddyFor(byPath, { ...ctx, settings: { terminalAnswering: true } }), TA.sessionId);
+});
+
+test('buddyFor: with terminalAnswering on, terminal sessions are matched as before', () => {
+  const ctx = { kept: [TA, DB], visible: [TA, DB], home: HOME, settings: { terminalAnswering: true } };
+  assert.equal(buddyFor(hookAsk(TA.sessionId), ctx), TA.sessionId);
+  assert.equal(buddyFor(hookAsk(DB.sessionId), ctx), DB.sessionId);
+  // A hidden terminal session still gets none.
+  assert.equal(buddyFor(hookAsk(TA.sessionId), { ...ctx, visible: [DB] }), null);
+});
+
+test('buddyFor: desktop sessions do not depend on terminalAnswering', () => {
+  const ctx = { kept: [TA, DB], visible: [TA, DB], home: HOME, settings: { terminalAnswering: false } };
+  assert.equal(buddyFor(hookAsk(DB.sessionId), ctx), DB.sessionId);
+});
+
+test('buddyFor: a prompt the card cannot show gets no buddy', () => {
+  const ctx = { kept: [DB], visible: [DB], home: HOME, settings: { terminalAnswering: true } };
+  const write = parseHook({
+    session_id: DB.sessionId,
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'Write',
+    tool_input: { file_path: 'x', content: 'y' },
+  });
+  assert.equal(buddyFor(write, ctx), null);
+  assert.equal(buddyFor(null, ctx), null);
+  assert.equal(buddyFor(hookAsk(DB.sessionId), null), null);
 });

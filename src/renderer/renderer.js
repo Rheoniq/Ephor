@@ -134,8 +134,8 @@
   // still when motion is reduced). The group is named by the kicker and
   // described by the elements whose ids are in describedBy (the question or
   // the command); all ids come from the prompt id, so they hold across
-  // renders.
-  function promptCard(kind, kicker, id, content, describedBy) {
+  // renders. The hint names the terminal for a terminal session.
+  function promptCard(kind, kicker, id, content, describedBy, source) {
     const card = el('div', `prompt ${kind}`);
     const kick = el('p', 'prompt-kicker', kicker);
     kick.id = window.HuddlePrompt.promptDomIds(id).kicker;
@@ -146,7 +146,7 @@
     const drain = el('span', 'prompt-drain');
     drain.setAttribute('aria-hidden', 'true');
     drain.dataset.promptId = id;
-    const hint = el('p', 'prompt-hint', 'Or answer in Claude Desktop (closes in 15 s)');
+    const hint = el('p', 'prompt-hint', window.HuddlePrompt.promptHint(source));
     card.append(kick, ...content, hint, drain);
     return card;
   }
@@ -159,7 +159,7 @@
   // One question at a time; the answers go to main together after the last.
   // Each option is a full-width button with its label and, below it, its
   // description. Multi-select options carry a check box and end with Done.
-  function renderAsk(st, view, sessionName) {
+  function renderAsk(st, view, sessionName, source) {
     const q = view.question;
     const multi = q.multiSelect === true;
     const options = el('div', 'prompt-options');
@@ -194,7 +194,7 @@
     const ids = window.HuddlePrompt.promptDomIds(view.id);
     const text = el('p', 'prompt-text', str(q.question));
     text.id = ids.text;
-    return promptCard('ask', `Question from ${sessionName}`, view.id, [text, options], [ids.text]);
+    return promptCard('ask', `Question from ${sessionName}`, view.id, [text, options], [ids.text], source);
   }
 
   // Renders now, or once no pointer is down, so a press keeps its button.
@@ -213,7 +213,7 @@
   // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
   // Deny is one click. The whole command is shown, wrapped, with no scroll
   // box of its own.
-  function renderPermission(st, view, sessionName) {
+  function renderPermission(st, view, sessionName, source) {
     const command = el('pre', 'prompt-command', str(view.command));
     const allow = promptButton(
       view.armed ? 'Confirm allow' : 'Allow',
@@ -249,18 +249,22 @@
       view.id,
       [text, command, actions],
       [ids.text, ids.command],
+      source,
     );
   }
 
   // The card for a held prompt, or null (none, malformed, or already answered).
-  function renderPrompt(prompt, sessionName) {
+  // source is the session's ('terminal' or 'desktop'), for the hint.
+  function renderPrompt(prompt, sessionName, source) {
     const st = promptStateFor(prompt);
     const view = st && st.current();
     // An answered card is hidden at once. If main refuses the answer (it
     // does not fit, or its timing is off), it says so and the card comes
     // back (onAnswerRefused below).
     if (!view || view.answered) return null;
-    return view.kind === 'ask' ? renderAsk(st, view, sessionName) : renderPermission(st, view, sessionName);
+    return view.kind === 'ask'
+      ? renderAsk(st, view, sessionName, source)
+      : renderPermission(st, view, sessionName, source);
   }
 
   // --- Plan: the bar under the name and the checklist ------------------------
@@ -358,7 +362,7 @@
 
     // A held prompt sits right under the name, above the status line, so it
     // is the first thing seen; the status line then moves below the card.
-    const card = s.prompt ? renderPrompt(s.prompt, name) : null;
+    const card = s.prompt ? renderPrompt(s.prompt, name, s.source) : null;
     const line = statusLine(s.plan, window.HuddleProgress.showsBar(s.plan, kind) ? bar : null, kind, color);
 
     const body = el('button', 'buddy-body');

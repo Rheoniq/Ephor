@@ -258,7 +258,15 @@
     return { kicker: `${base}-kicker`, text: `${base}-text`, command: `${base}-command` };
   }
 
-  const api = { createPromptState, refusedId, promptDomIds, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
+  // The line under a card that says where else the prompt can be answered
+  // and that the card closes after the 15 s hold: the terminal for a
+  // terminal session, Claude Desktop for any other.
+  function promptHint(source) {
+    const where = source === 'terminal' ? 'the terminal' : 'Claude Desktop';
+    return `Or answer in ${where} (closes in 15 s)`;
+  }
+
+  const api = { createPromptState, refusedId, promptDomIds, promptHint, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddlePrompt = api;
 })(typeof window !== 'undefined' ? window : globalThis);

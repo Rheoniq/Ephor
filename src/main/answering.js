@@ -153,6 +153,29 @@ function matchBuddy(parsed, ctx) {
   return byTranscript.length === 1 ? pick(byTranscript[0]) : null;
 }
 
+// Whether the panel may answer prompts of this kept session. Desktop sessions
+// always; terminal sessions only while the setting terminalAnswering is true
+// (off by default until the live check of hook answers in a terminal has
+// passed). A session without a source counts as desktop, as in the snapshot.
+function canAnswerFor(session, settings) {
+  if (!isObject(session)) return false;
+  if (session.source !== 'terminal') return true;
+  return isObject(settings) && settings.terminalAnswering === true;
+}
+
+// The buddy a hook is held for, or null to answer 204 at once: the card can
+// show the prompt in full (promptView), the hook belongs to a visible buddy
+// (matchBuddy) and the panel may answer for that session (canAnswerFor).
+// ctx: { kept, visible, home, settings }.
+function buddyFor(parsed, ctx) {
+  if (!isObject(ctx) || !promptView(parsed)) return null;
+  const id = matchBuddy(parsed, ctx);
+  if (!id) return null;
+  const kept = Array.isArray(ctx.kept) ? ctx.kept : [];
+  const session = kept.find((s) => s && s.sessionId === id);
+  return canAnswerFor(session, ctx.settings) ? id : null;
+}
+
 // Whether a held prompt must end, checked on every registry read. The
 // registry may not show 'waiting' while a hook holds the request, so only a
 // session seen 'waiting' and then not (Desktop was answered first) ends it,
@@ -205,6 +228,8 @@ module.exports = {
   promptView,
   buildResponse,
   matchBuddy,
+  canAnswerFor,
+  buddyFor,
   holdState,
   createHold,
   armHold,

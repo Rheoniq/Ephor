@@ -54,7 +54,8 @@ const { parseHook } = require('./prompts');
 const {
   promptView,
   buildResponse,
-  matchBuddy,
+  buddyFor,
+  canAnswerFor,
   holdState,
   createHold,
   armHold,
@@ -317,10 +318,31 @@ function cancelAllHolds() {
 }
 
 // Server callback: the buddy a hook belongs to, or null to answer 204 at
-// once. A prompt the card cannot show in full is never held.
+// once. A prompt the card cannot show in full is never held, and a terminal
+// session's prompt only while the setting terminalAnswering is on (off, the
+// terminal shows its own prompt at once).
 function findBuddy(parsed) {
-  if (!promptView(parsed)) return null;
-  return matchBuddy(parsed, { kept: lastKept, visible: lastVisible, home: HOME });
+  return buddyFor(parsed, { kept: lastKept, visible: lastVisible, home: HOME, settings });
+}
+
+// The tray checkbox "Answer terminal prompts". Turning it off hands every
+// held terminal prompt back to its terminal at once.
+function setTerminalAnswering(on) {
+  settings.terminalAnswering = on === true;
+  persistSettings();
+  console.log(`[huddle] answering terminal prompts: ${settings.terminalAnswering ? 'on' : 'off'}`);
+  if (!settings.terminalAnswering && hookServer) {
+    let ended = false;
+    for (const entry of [...prompts.values()]) {
+      const session = lastKept.find((s) => s.sessionId === entry.sessionId);
+      if (session && !canAnswerFor(session, settings)) {
+        cancelHold(entry);
+        ended = true;
+      }
+    }
+    if (ended) scheduleRefresh();
+  }
+  rebuildTrayMenu();
 }
 
 // Server callback: a hook is held for `sessionId`. Tool input is never logged.
@@ -980,6 +1002,13 @@ function trayMenu() {
       },
     },
     { type: 'separator' },
+    {
+      // Off by default: prompts of terminal sessions stay in the terminal.
+      label: 'Answer terminal prompts',
+      type: 'checkbox',
+      checked: settings.terminalAnswering === true,
+      click: (item) => setTerminalAnswering(item.checked),
+    },
     { label: 'Copy token setup command', enabled: !!hookToken, click: () => copySetupCommand() },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },

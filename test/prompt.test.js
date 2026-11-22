@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createPromptState, refusedId, promptDomIds, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
+const { createPromptState, refusedId, promptDomIds, promptHint, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
 const main = require('../src/main/answering');
 
 function question(text, labels, multiSelect = false) {
@@ -395,4 +395,12 @@ test('promptDomIds escapes every character outside letters, digits and hyphens',
   // Escaping keeps distinct prompt ids apart.
   assert.notEqual(promptDomIds('a b').text, promptDomIds('a_b').text);
   assert.notEqual(promptDomIds('a_20_b').text, promptDomIds('a b').text);
+});
+
+test('promptHint names where else the prompt can be answered', () => {
+  assert.equal(promptHint('terminal'), 'Or answer in the terminal (closes in 15 s)');
+  assert.equal(promptHint('desktop'), 'Or answer in Claude Desktop (closes in 15 s)');
+  for (const odd of [undefined, null, '', 'Terminal', 42, {}]) {
+    assert.equal(promptHint(odd), 'Or answer in Claude Desktop (closes in 15 s)', String(odd));
+  }
 });
