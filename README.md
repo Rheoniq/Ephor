@@ -1,6 +1,6 @@
 # Huddle
 
-Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Desktop (Claude Code) sessions that need attention, their status and their latest steps. The arrow on a session takes you to that session in Claude Desktop. The panel hides itself when nothing needs showing.
+Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Desktop (Claude Code) sessions that need attention, their status and how far each one is through its plan. The arrow on a session takes you to that session in Claude Desktop. The panel hides itself when nothing needs showing.
 
 Version 0.2.0 adds: header buttons to hide and quit, a hotkey, a collapsed pill you can drag, quiet mode, toasts, a pixel creature avatar per session, and answering Claude's option prompts and shell command approvals from the panel.
 
@@ -14,6 +14,23 @@ A session is shown only when it is:
 - holding a prompt.
 
 Plain idle sessions are never shown. "Finished" means the session went from busy or waiting to idle while Huddle ran. It clears when you open the session with the arrow (a successful open), when you dismiss it, or when the session is busy or waiting again. A session that is already idle when Huddle starts is never "finished".
+
+## Progress view
+
+Under each session's name is a thin bar with a label `current/total phase`, for example `3/5 Write tests`. `current` is the number of the step being worked on, so a plan with two steps done and the third active reads 3/5. A finished plan reads `7/7 Done`. The bar fills to current/total, so an active last step already shows a full bar; only the label tells `7/7 Review` from `7/7 Done`. A chip next to the label says "Needs you" (waiting) or "Finished".
+
+What feeds it:
+
+- The agent's own plan, recorded in the session transcript each time the agent calls its `update_plan` tool.
+- A session that never makes a plan shows its status label instead (Working, Needs you or Finished).
+- The plan comes from Desktop's undocumented transcript format. If that format changes, the bar disappears and the status label shows; nothing else breaks.
+
+Click a session to expand it:
+
+- The whole plan as a checklist: a checked box for done steps, a spinner for the active step, an empty box for steps still to do. At most 30 steps are shown.
+- Below it, the last shell command the session ran, on one line (cut at 160 characters). Without a plan only that line shows, or "No plan yet".
+
+Each row has the arrow (open in Claude Desktop) and the x (dismiss) stacked on its right edge.
 
 ## Panel controls
 
@@ -39,16 +56,18 @@ A small window says "needs you" when a session starts waiting and "finished" whe
 
 ## Look
 
-Each session gets a small pixel creature: 6 colors and 3 small shape variants, picked from the session id, with eyes that show busy, waiting or idle. Animation follows the system's reduced-motion setting. The style is a warm Anthropic look set in Georgia and Segoe UI; Anthropic's own fonts are licensed and are not bundled. Light and dark follow the system.
+Each session gets a small pixel creature with eyes that show busy, waiting or idle, and one of 3 small shape variants picked from the session id.
+
+Colors come from a palette of 12, assigned per visible session so no two visible sessions share one. A session keeps its color while it stays visible; one that disappears and comes back may return in another color. With more than 12 sessions on screen, colors repeat. The progress bar and the spinner use the session's color. Animation follows the system's reduced-motion setting. The style is a warm Anthropic look set in Georgia and Segoe UI; Anthropic's own fonts are licensed and are not bundled. Light and dark follow the system.
 
 The panel stays above borderless full-screen windows (such as a browser video in full screen).
 
 ## Answering from the panel
 
-When a session raises a prompt that Huddle can handle, its card shows it:
+When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop", and a line along its bottom edge that drains over the 15 second hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
 
-- **`AskUserQuestion`:** the question and its option buttons, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
-- **Bash and PowerShell commands:** the whole command, wrapped, in monospace, with Allow and Deny. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
+- **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
+- **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
 - Clicks in the first moment after a card appears are ignored, so a stray double-click cannot answer.
 
 A command card appears only when all of this holds:
@@ -107,7 +126,7 @@ Both versions use the app name Huddle, so they share the settings folder and the
 Huddle only reads local files; it never writes to them.
 
 - Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped.
-- Steps: each session's transcript under `~/.claude/projects/`.
+- Plan and last command: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan and the latest shell command are found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped.
 
 ## Run
 
@@ -166,6 +185,8 @@ Right-click the Huddle tray icon and tick "Start at login". It is off by default
 - Full screen: the panel and toasts stay above borderless full-screen windows, not above exclusive full-screen apps (some games).
 - Port 47821 is fixed.
 - Write, Edit, MCP and other non-shell approvals always stay in Desktop.
+- The progress view reads Desktop's undocumented transcript format; a format change turns the bar off until Huddle is updated.
+- A plan whose latest full list lies more than 8 MiB from the end of the transcript when Huddle reads it from scratch is not found; the session then shows its status label.
 
 ### Verified live (hook gate, 2026-11-20)
 
@@ -189,6 +210,7 @@ The hook gate ran before the `Origin` and `Host` checks were added: the server n
 - What Claude Code does on a refused (over 64 KiB) payload that gets no decision.
 - Clicking the toast cross with a real pointer.
 - Two monitors and mixed DPI.
+- The plan reader's real-world behaviour on very large transcripts (speed, and whether the plan is still found).
 
 ## Privacy
 
