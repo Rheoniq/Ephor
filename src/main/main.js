@@ -29,6 +29,7 @@ const {
   clampHeight,
   createSnapshotGate,
   toSnapshotSession,
+  findOpenable,
   snapshotPlan,
   createPlanSource,
   isShown,
@@ -1093,7 +1094,9 @@ ipcMain.on('huddle:answer', (event, payload) => {
 ipcMain.handle('huddle:open', async (event, hostSessionId) => {
   if (!fromOurWindow(event)) return 'failed';
   if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
-  const shown = lastSnapshot.sessions.find((s) => s.hostSessionId === hostSessionId);
+  // Desktop sessions only: a terminal session has no hostSessionId and is
+  // refused here.
+  const shown = findOpenable(lastSnapshot.sessions, hostSessionId);
   if (!shown) return 'failed';
   let result;
   if (DEMO) {

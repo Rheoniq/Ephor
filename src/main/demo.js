@@ -13,10 +13,12 @@ function demoPlan(contents, current) {
 // Fixed fake sessions for HUDDLE_DEMO=1, so the UI can be checked without
 // reading ~/.claude. `planItems` are update_plan items as the plan reader
 // returns them (no key means no plan); `lastCommand` is the last shell
-// command.
+// command. Seven sessions, six of them shown: two run in a terminal
+// (`source: 'terminal'`, no hostSessionId), the rest in Claude Desktop.
 function demoSessions() {
   const now = Date.now();
-  const base = { cwd: 'C:\\demo', pid: 0, updatedAt: now };
+  const base = { cwd: 'C:\\demo', pid: 0, updatedAt: now, source: 'desktop' };
+  const terminal = { cwd: 'C:\\demo', pid: 0, updatedAt: now, source: 'terminal', entrypoint: 'cli' };
   return [
     {
       ...base,
@@ -70,15 +72,25 @@ function demoSessions() {
       lastCommand: 'echo "<b>not bold</b>" > notes/<script>.md',
     },
     {
-      ...base,
-      // Busy past its complete plan (a follow-up that made no new plan): the
-      // panel shows Working with no bar; the checklist is all checked.
+      ...terminal,
+      // Terminal, busy past its complete plan (a follow-up that made no new
+      // plan): the panel shows Working with no bar; the checklist is all
+      // checked.
       sessionId: 'demo-drafting',
-      hostSessionId: 'local_demo-drafting',
       name: 'Draft the newsletter for December',
       status: 'busy',
       planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 7),
       lastCommand: 'git diff --stat drafts/december.md',
+    },
+    {
+      ...terminal,
+      // Terminal, finished like demo-finished (busy before, idle now).
+      sessionId: 'demo-term-finished',
+      name: 'Rename the client folders to the new scheme',
+      status: 'idle',
+      before: 'busy',
+      planItems: demoPlan(['List the folders', 'Rename', 'Check the links'], 4),
+      lastCommand: 'git status --short',
     },
   ];
 }

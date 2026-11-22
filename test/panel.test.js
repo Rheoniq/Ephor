@@ -9,6 +9,7 @@ const {
   isShown,
   snapshotPlan,
   createPlanSource,
+  findOpenable,
 } = require('../src/main/panel');
 const { demoSessions } = require('../src/main/demo');
 
@@ -48,6 +49,9 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
     cwd: 'C:\\secret',
     pid: 42,
     updatedAt: 1,
+    procStart: '1340',
+    entrypoint: 'claude-desktop',
+    source: 'desktop',
   };
   assert.deepEqual(toSnapshotSession(s), {
     sessionId: 'a',
@@ -57,7 +61,74 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
     finished: false,
     plan: null,
     lastCommand: null,
+    source: 'desktop',
+    host: null,
   });
+});
+
+test('toSnapshotSession: a terminal session carries source terminal, host null and no procStart or cwd', () => {
+  const s = {
+    sessionId: 'b',
+    hostSessionId: undefined,
+    name: 'T',
+    status: 'waiting',
+    cwd: 'C:\\term',
+    pid: 7,
+    procStart: '1340',
+    entrypoint: 'cli',
+    source: 'terminal',
+  };
+  const out = toSnapshotSession(s);
+  assert.equal(out.source, 'terminal');
+  assert.equal(out.host, null);
+  for (const k of ['procStart', 'cwd', 'pid', 'entrypoint']) assert.equal(k in out, false, k);
+  assert.deepEqual(JSON.parse(JSON.stringify(out)), {
+    sessionId: 'b',
+    name: 'T',
+    status: 'waiting',
+    finished: false,
+    plan: null,
+    lastCommand: null,
+    source: 'terminal',
+    host: null,
+  });
+});
+
+test('toSnapshotSession: the JSON of a desktop session is the old JSON plus source and host at the end', () => {
+  const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy', source: 'desktop' };
+  const plan = snapshotPlan([{ content: 'x', status: 'in_progress' }]);
+  const old = JSON.stringify({
+    sessionId: 'a',
+    hostSessionId: 'local_a',
+    name: 'N',
+    status: 'busy',
+    finished: true,
+    plan,
+    lastCommand: 'npm test',
+  });
+  const now = JSON.stringify(toSnapshotSession(s, undefined, true, plan, 'npm test'));
+  assert.equal(now, old.slice(0, -1) + ',"source":"desktop","host":null}');
+});
+
+test('toSnapshotSession: a session without a source counts as desktop', () => {
+  assert.equal(toSnapshotSession({ sessionId: 'a', hostSessionId: 'local_a' }).source, 'desktop');
+  assert.equal(toSnapshotSession({ sessionId: 'a', source: 'weird' }).source, 'desktop');
+});
+
+test('findOpenable: finds a shown desktop session by hostSessionId', () => {
+  const d = { sessionId: 'a', hostSessionId: 'local_a', source: 'desktop' };
+  const t = { sessionId: 'b', hostSessionId: undefined, source: 'terminal' };
+  assert.equal(findOpenable([t, d], 'local_a'), d);
+});
+
+test('findOpenable: refuses terminal sessions and empty or missing ids without throwing', () => {
+  const t = { sessionId: 'b', hostSessionId: undefined, source: 'terminal' };
+  const t2 = { sessionId: 'c', hostSessionId: 'local_c', source: 'terminal' };
+  assert.equal(findOpenable([t, t2], ''), null);
+  assert.equal(findOpenable([t, t2], undefined), null);
+  assert.equal(findOpenable([t, t2], 'local_c'), null);
+  assert.equal(findOpenable([t], 'undefined'), null);
+  assert.equal(findOpenable([], 'local_a'), null);
 });
 
 test('toSnapshotSession sets finished as a boolean', () => {
@@ -79,6 +150,8 @@ test('toSnapshotSession adds a prompt only when one is given', () => {
     finished: false,
     plan: null,
     lastCommand: null,
+    source: 'desktop',
+    host: null,
     prompt,
   });
   assert.equal('prompt' in toSnapshotSession(s, null), false);
@@ -142,6 +215,8 @@ test('toSnapshotSession carries plan and lastCommand when given', () => {
     'finished',
     'plan',
     'lastCommand',
+    'source',
+    'host',
   ]);
 });
 
@@ -316,5 +391,20 @@ test('demo sessions: the planned plans, and a command on each', () => {
   const completeFor = (pred) => sessions.some((s) => pred(s) && (snapshotPlan(s.planItems) || {}).state === 'complete');
   assert.ok(completeFor((s) => s.status === 'idle' && s.before === 'busy'));
   assert.ok(completeFor((s) => s.status === 'busy'));
-  assert.ok(sessions.length <= 6);
+  assert.ok(sessions.length <= 7);
+  const isShownDemo = (s) => s.status !== 'idle' || s.before === 'busy';
+  assert.ok(sessions.filter(isShownDemo).length <= 6);
+});
+
+test('demo sessions: two terminal sessions, a busy one with a plan and a finished one, without hostSessionId', () => {
+  const sessions = demoSessions();
+  for (const s of sessions) assert.ok(s.source === 'desktop' || s.source === 'terminal', s.sessionId);
+  const term = sessions.filter((s) => s.source === 'terminal');
+  assert.equal(term.length, 2);
+  for (const s of term) assert.equal(s.hostSessionId, undefined, s.sessionId);
+  assert.ok(term.some((s) => s.status === 'busy' && snapshotPlan(s.planItems) !== null));
+  assert.ok(term.some((s) => s.status === 'idle' && s.before === 'busy'));
+  for (const s of sessions.filter((x) => x.source === 'desktop')) {
+    assert.equal(typeof s.hostSessionId, 'string', s.sessionId);
+  }
 });

@@ -36,7 +36,9 @@ function createSnapshotGate() {
 // while a hook prompt for the session is held. `finished` is true only for a
 // session that just finished and was not looked at yet (finished.js).
 // `plan` (from snapshotPlan) and `lastCommand` are always present, null when
-// unknown, so the snapshot keeps one shape.
+// unknown, so the snapshot keeps one shape. `source` is 'terminal' or
+// 'desktop' (the default); `host` is always null for now. Both come after the
+// older fields so a desktop session's JSON only grows at the end.
 function toSnapshotSession(s, prompt, finished, plan, lastCommand) {
   const out = {
     sessionId: s.sessionId,
@@ -46,6 +48,8 @@ function toSnapshotSession(s, prompt, finished, plan, lastCommand) {
     finished: finished === true,
     plan: plan || null,
     lastCommand: typeof lastCommand === 'string' && lastCommand ? lastCommand : null,
+    source: s.source === 'terminal' ? 'terminal' : 'desktop',
+    host: null,
   };
   if (prompt) out.prompt = prompt;
   return out;
@@ -116,6 +120,17 @@ function createPlanSource(reader, fileFor, onError) {
   return { read, prune };
 }
 
+// The shown session that the open IPC may open in Claude Desktop: a desktop
+// session whose hostSessionId equals the given non-empty string. Terminal
+// sessions are never returned (they have no hostSessionId). null if none.
+function findOpenable(sessions, hostSessionId) {
+  if (typeof hostSessionId !== 'string' || hostSessionId === '') return null;
+  const found = sessions.find(
+    (s) => s && s.source !== 'terminal' && typeof s.hostSessionId === 'string' && s.hostSessionId === hostSessionId,
+  );
+  return found || null;
+}
+
 // Whether the panel shows a session. A dismissed session is never shown.
 // Otherwise it is shown when busy or waiting, when it just finished and was
 // not looked at yet, or while a hook prompt for it is pending (a hook proves
@@ -132,6 +147,7 @@ module.exports = {
   toSnapshotSession,
   snapshotPlan,
   createPlanSource,
+  findOpenable,
   isShown,
   MIN_HEIGHT,
   MAX_HEIGHT,

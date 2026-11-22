@@ -63,16 +63,69 @@ test('returns an interactive claude-desktop session with a live pid, all fields'
       cwd: 'C:\\work\\proj',
       pid: 1001,
       updatedAt: 1700000000000,
+      procStart: undefined,
+      source: 'desktop',
+      entrypoint: 'claude-desktop',
     },
   ]);
 });
 
-test('excludes sessions whose kind is not interactive or entrypoint is not claude-desktop', () => {
+test('excludes sessions whose kind is not interactive', () => {
   writeJson('1001.json', base({ pid: 1001, sessionId: ID_OK }));
   writeJson('1002.json', base({ pid: 1002, sessionId: ID_BG, kind: 'background' }));
-  writeJson('1003.json', base({ pid: 1003, sessionId: ID_CLI, entrypoint: 'cli' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_CLI, kind: 'sdk', entrypoint: 'sdk-ts' }));
   const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
   assert.deepEqual(ids, [ID_OK]);
+});
+
+test('a registry with desktop, cli, headless, dead and bad-id entries: desktop and cli come back with their source', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_OK }));
+  const cli = base({
+    pid: 1002,
+    sessionId: ID_CLI,
+    entrypoint: 'cli',
+    name: 'Terminal work',
+    status: 'waiting',
+    cwd: 'C:\\work\\term',
+    procStart: '134000000000000000',
+  });
+  delete cli.hostSessionId;
+  writeJson('1002.json', cli);
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_BG, kind: 'sdk', entrypoint: 'sdk-cli' }));
+  writeJson('1004.json', base({ pid: 1004, sessionId: ID_DEAD, entrypoint: 'cli', hostSessionId: undefined }));
+  writeJson('1005.json', base({ pid: 1005, sessionId: 'not-a-uuid', entrypoint: 'cli', hostSessionId: undefined }));
+  const sessions = readSessions(dir, (pid) => pid !== 1004);
+  const byId = Object.fromEntries(sessions.map((s) => [s.sessionId, s]));
+  assert.deepEqual(Object.keys(byId).sort(), [ID_OK, ID_CLI].sort());
+  assert.equal(byId[ID_OK].source, 'desktop');
+  assert.equal(byId[ID_OK].hostSessionId, 'local_abc');
+  assert.equal(byId[ID_OK].entrypoint, 'claude-desktop');
+  assert.deepEqual(byId[ID_CLI], {
+    sessionId: ID_CLI,
+    hostSessionId: undefined,
+    name: 'Terminal work',
+    status: 'waiting',
+    cwd: 'C:\\work\\term',
+    pid: 1002,
+    updatedAt: 1700000000000,
+    procStart: '134000000000000000',
+    source: 'terminal',
+    entrypoint: 'cli',
+  });
+});
+
+test('a claude-desktop entry without a hostSessionId counts as terminal', () => {
+  writeJson('1001.json', base({ hostSessionId: undefined }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_B, hostSessionId: '' }));
+  const sources = readSessions(dir, allAlive).map((s) => s.source);
+  assert.deepEqual(sources, ['terminal', 'terminal']);
+});
+
+test('a non-string entrypoint becomes an empty string and the session is terminal', () => {
+  writeJson('1001.json', base({ entrypoint: 42, hostSessionId: undefined }));
+  const [s] = readSessions(dir, allAlive);
+  assert.equal(s.entrypoint, '');
+  assert.equal(s.source, 'terminal');
 });
 
 test('excludes sessions whose pid is not alive', () => {

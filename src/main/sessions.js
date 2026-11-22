@@ -39,19 +39,31 @@ function readSessions(dir, isAlive) {
       continue;
     }
     if (!data || typeof data !== 'object') continue;
-    if (data.kind !== 'interactive' || data.entrypoint !== 'claude-desktop') continue;
+    // Interactive sessions only: Desktop and terminal (cli). Headless and SDK
+    // sessions have another kind and are dropped.
+    if (data.kind !== 'interactive') continue;
     // sessionId ends up in a transcript path and in IPC: accept only a UUID.
     if (typeof data.sessionId !== 'string' || !SESSION_ID_RE.test(data.sessionId)) continue;
     if (!isAlive(data.pid)) continue;
 
+    const entrypoint = typeof data.entrypoint === 'string' ? data.entrypoint : '';
+    const hasHost = typeof data.hostSessionId === 'string' && data.hostSessionId !== '';
+    // A Desktop session can be opened by its hostSessionId; any other
+    // interactive session runs in a terminal and has none.
+    const source = entrypoint === 'claude-desktop' && hasHost ? 'desktop' : 'terminal';
+
     sessions.push({
       sessionId: data.sessionId,
-      hostSessionId: data.hostSessionId,
+      hostSessionId: source === 'desktop' ? data.hostSessionId : undefined,
       name: data.name,
       status: KNOWN_STATUSES.has(data.status) ? data.status : 'idle',
       cwd: data.cwd,
       pid: data.pid,
       updatedAt: data.updatedAt,
+      // Main only (a pid-reuse guard); never sent to the renderer.
+      procStart: data.procStart,
+      source,
+      entrypoint,
     });
   }
   return sessions;
