@@ -211,6 +211,131 @@ test('a missing file with no history returns nulls and never throws', () => {
   assert.deepEqual(reader.read(undefined), { items: null, lastCommand: null });
 });
 
+// Fixed-id plan line, so two lines with equally long content have equal length.
+function fixedPlan(word) {
+  return JSON.stringify({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_fixed', name: PLAN, input: { items: [{ content: `${word} 1`, status: 'in_progress' }] } }] },
+  });
+}
+
+function setMtime(ms) {
+  const t = new Date(ms);
+  fs.utimesSync(file, t, t);
+}
+
+test('a file truncated and regrown larger with new content is read again from scratch', () => {
+  write([plan({ items: items(3) }), bash('a')]);
+  setMtime(Date.now() - 60000);
+  const reader = createPlanReader({ chunkBytes: 200 });
+  reader.read(file);
+  const long = [{ content: 'Rewritten ' + 'w'.repeat(180), status: 'in_progress' }];
+  write([plan({ items: long }), plan({ items: long }), bash('b')]);
+  setMtime(Date.now());
+  const r = reader.read(file);
+  assert.equal(r.items.length, 1);
+  assert.ok(r.items[0].content.startsWith('Rewritten '));
+  assert.equal(r.lastCommand, 'b');
+});
+
+test('a grown file whose mtime went back is read again from scratch', () => {
+  const now = Date.now();
+  write([fixedPlan('Old')]);
+  setMtime(now);
+  const reader = createPlanReader({ chunkBytes: 200 });
+  assert.equal(reader.read(file).items[0].content, 'Old 1');
+  // Same first-line length, so the byte before the old resume offset is
+  // still a newline; only the mtime shows the rewrite.
+  write([fixedPlan('New'), bash('c')]);
+  setMtime(now - 60000);
+  const r = reader.read(file);
+  assert.equal(r.items[0].content, 'New 1');
+  assert.equal(r.lastCommand, 'c');
+});
+
+test('a same-size file with a different mtime is read again', () => {
+  write([fixedPlan('Old')]);
+  setMtime(Date.now() - 60000);
+  const reader = createPlanReader({ chunkBytes: 200 });
+  reader.read(file);
+  write([fixedPlan('New')]);
+  setMtime(Date.now());
+  assert.equal(reader.read(file).items[0].content, 'New 1');
+});
+
+test('sidechain events never reach the plan or the last command', () => {
+  const side = (name, input) => JSON.stringify({
+    type: 'assistant',
+    isSidechain: true,
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_side', name, input }] },
+  });
+  write([plan({ items: items(3) }), bash('parent'), side(PLAN, { advance: true }), side(PLAN, { items: items(1) }), side('Bash', { command: 'child' })]);
+  const reader = createPlanReader({ chunkBytes: 200 });
+  const r = reader.read(file);
+  assert.deepEqual(statuses(r), ['in_progress', 'pending', 'pending']);
+  assert.equal(r.lastCommand, 'parent');
+  append([side(PLAN, { advance: true }), side('PowerShell', { command: 'child2' })]);
+  const r2 = reader.read(file);
+  assert.deepEqual(statuses(r2), ['in_progress', 'pending', 'pending']);
+  assert.equal(r2.lastCommand, 'parent');
+});
+
+test('forget drops the cached result so the next read reads the file', () => {
+  write([plan({ items: items(2) }), bash('a')]);
+  const reader = createPlanReader();
+  reader.read(file);
+  reader.forget(file);
+  reader.forget(path.join(dir, 'never-read.jsonl'));
+  const orig = fs.readSync;
+  let calls = 0;
+  fs.readSync = function (...args) { calls += 1; return orig.apply(this, args); };
+  try {
+    assert.equal(reader.read(file).lastCommand, 'a');
+  } finally {
+    fs.readSync = orig;
+  }
+  assert.ok(calls > 0);
+  fs.rmSync(file);
+  reader.forget(file);
+  assert.deepEqual(reader.read(file), { items: null, lastCommand: null });
+});
+
+test('results are frozen so callers cannot change the cache', () => {
+  write([plan({ items: items(2) }), bash('a')]);
+  const reader = createPlanReader();
+  const r = reader.read(file);
+  assert.ok(Object.isFrozen(r));
+  assert.ok(Object.isFrozen(r.items));
+  assert.ok(Object.isFrozen(r.items[0]));
+  assert.throws(() => { r.items[0].status = 'completed'; }, TypeError);
+  assert.throws(() => { r.items.push({}); }, TypeError);
+  assert.deepEqual(statuses(reader.read(file)), ['in_progress', 'pending']);
+  append([plan({ advance: true })]);
+  assert.deepEqual(statuses(reader.read(file)), ['completed', 'in_progress']);
+});
+
+test('reads CRLF-terminated lines', () => {
+  fs.writeFileSync(file, [plan({ items: items(3) }), plan({ advance: true }), bash('dir')].join('\r\n') + '\r\n');
+  const r = createPlanReader({ chunkBytes: 200 }).read(file);
+  assert.deepEqual(statuses(r), ['completed', 'in_progress', 'pending']);
+  assert.equal(r.lastCommand, 'dir');
+});
+
+test('multibyte characters survive chunks smaller than 10 bytes', () => {
+  const text = 'Café résumé 日本 🚀';
+  write([plan({ items: [{ content: text, status: 'in_progress' }] }), filler(1), bash('echo éè')]);
+  const r = createPlanReader({ chunkBytes: 7 }).read(file);
+  assert.equal(r.items[0].content, text);
+  assert.equal(r.lastCommand, 'echo éè');
+});
+
+test('a transcript with a plan and no command returns lastCommand null', () => {
+  write([plan({ items: items(2) }), filler(1), plan({ advance: true })]);
+  const r = createPlanReader({ chunkBytes: 200 }).read(file);
+  assert.deepEqual(statuses(r), ['completed', 'in_progress']);
+  assert.equal(r.lastCommand, null);
+});
+
 test('an empty file returns nulls', () => {
   fs.writeFileSync(file, '');
   assert.deepEqual(createPlanReader().read(file), { items: null, lastCommand: null });

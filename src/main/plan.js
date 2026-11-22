@@ -66,7 +66,8 @@ function applyUpdate(items, input) {
   }
   if (hasStart && validIndex(input.start, next.length)) {
     // Only one item is in progress: a started item moves any other active
-    // item back to pending.
+    // item back to pending. `done` is applied first, so an index in both
+    // `done` and `start` (for example {done:[2],start:2}) ends in progress.
     for (const i of next) if (i.status === 'in_progress') i.status = 'pending';
     next[input.start - 1].status = 'in_progress';
   }

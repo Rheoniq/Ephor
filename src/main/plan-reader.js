@@ -38,6 +38,9 @@ function toolUses(lineBuf) {
     return [];
   }
   if (!event || event.type !== 'assistant') return [];
+  // Subagent transcripts normally live in separate files; a sidechain event
+  // that does show up here must never reach the parent's plan or command.
+  if (event.isSidechain === true) return [];
   const content = event.message && event.message.content;
   if (!Array.isArray(content)) return [];
   return content.filter((b) => b && b.type === 'tool_use' && typeof b.name === 'string');
@@ -73,7 +76,8 @@ function scanBackward(fd, size, chunkBytes, maxScanBytes) {
   let buf = readRange(fd, Math.max(0, size - Math.min(chunkBytes, size)), Math.min(chunkBytes, size));
   let bufStart = size - buf.length;
   // Find the end of the last complete line; an unterminated tail is still
-  // being written and is skipped.
+  // being written and is skipped. A complete final line without a trailing
+  // newline therefore stays invisible until another line is appended.
   let end = buf.lastIndexOf(NL);
   while (end === -1 && bufStart > 0 && size - bufStart < maxScanBytes) {
     const len = Math.min(chunkBytes, bufStart);
@@ -181,13 +185,13 @@ function createPlanReader(opts = {}) {
       if (prev && prev.size === size && prev.mtimeMs === mtimeMs) return prev.result;
 
       let state;
-      if (prev && size >= prev.parsedEnd && size > prev.size && size - prev.parsedEnd <= maxScanBytes) {
+      if (canResume(fd, prev, size, mtimeMs, maxScanBytes)) {
         state = scanForward(fd, prev.parsedEnd, size, prev.state);
       } else {
         state = scanBackward(fd, size, chunkBytes, maxScanBytes);
       }
-      const result = { items: state.items, lastCommand: state.lastCommand };
-      cache.set(file, { size, mtimeMs, parsedEnd: state.parsedEnd, state, result });
+      const result = freezeResult(state.items, state.lastCommand);
+      cache.set(file, { size, mtimeMs, parsedEnd: state.parsedEnd, state: { ...state, items: result.items }, result });
       return result;
     } catch {
       return fallback();
@@ -196,7 +200,32 @@ function createPlanReader(opts = {}) {
     }
   }
 
-  return { read };
+  // Drops the cached result for a file (for example a session that left).
+  function forget(file) {
+    cache.delete(file);
+  }
+
+  return { read, forget };
+}
+
+// The forward path is only safe when the file was appended to: it grew, its
+// mtime did not go back, and the byte just before the resume offset is still
+// the newline that ended the last parsed line. Anything else is treated as a
+// rewrite and gets a full backward scan.
+function canResume(fd, prev, size, mtimeMs, maxScanBytes) {
+  if (!prev) return false;
+  if (size <= prev.size || size < prev.parsedEnd) return false;
+  if (mtimeMs < prev.mtimeMs) return false;
+  if (size - prev.parsedEnd > maxScanBytes) return false;
+  if (prev.parsedEnd === 0) return true;
+  const b = readRange(fd, prev.parsedEnd - 1, 1);
+  return b.length === 1 && b[0] === NL;
+}
+
+// Results are shared with callers and kept in the cache, so they are frozen.
+function freezeResult(items, lastCommand) {
+  const frozen = Array.isArray(items) ? Object.freeze(items.map((i) => Object.freeze({ ...i }))) : null;
+  return Object.freeze({ items: frozen, lastCommand });
 }
 
 module.exports = { createPlanReader };

@@ -163,6 +163,11 @@ test('summarize returns null for no items', () => {
   assert.equal(summarize(undefined), null);
 });
 
+test('applyUpdate with the same index in done and start leaves it in progress', () => {
+  // done is applied first, then start: {done:[2],start:2} ends with item 2 in progress.
+  assert.deepEqual(statuses(applyUpdate(list(C, P, P), { done: [2], start: 2 })), [C, A, P]);
+});
+
 test('summarize handles a single item', () => {
   assert.deepEqual(summarize(list(A)), { total: 1, current: 1, phase: 'Step 1', done: 0, state: 'active' });
 });
