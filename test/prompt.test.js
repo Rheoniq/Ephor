@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createPromptState, refusedId, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
+const { createPromptState, refusedId, promptDomIds, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS } = require('../src/renderer/prompt');
 const main = require('../src/main/answering');
 
 function question(text, labels, multiSelect = false) {
@@ -376,4 +376,23 @@ test('reset clears the prompt and its progress', () => {
   assert.equal(st.current(), null);
   st.show(ask('p1', [question('Q1?', ['A']), question('Q2?', ['B'])]));
   assert.equal(st.current().index, 0, 'same id after reset starts over');
+});
+
+test('promptDomIds is stable per prompt id and gives kicker, text and command ids', () => {
+  const a = promptDomIds('demo-ask');
+  assert.deepEqual(a, {
+    kicker: 'prompt-demo-ask-kicker',
+    text: 'prompt-demo-ask-text',
+    command: 'prompt-demo-ask-command',
+  });
+  assert.deepEqual(promptDomIds('demo-ask'), a);
+  assert.notEqual(promptDomIds('demo-permission').kicker, a.kicker);
+});
+
+test('promptDomIds escapes every character outside letters, digits and hyphens', () => {
+  const ids = promptDomIds('a b"<x>_');
+  for (const v of Object.values(ids)) assert.match(v, /^[A-Za-z0-9_-]+$/);
+  // Escaping keeps distinct prompt ids apart.
+  assert.notEqual(promptDomIds('a b').text, promptDomIds('a_b').text);
+  assert.notEqual(promptDomIds('a_20_b').text, promptDomIds('a b').text);
 });

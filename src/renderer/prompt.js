@@ -249,7 +249,16 @@
     };
   }
 
-  const api = { createPromptState, refusedId, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
+  // DOM ids for one prompt card, derived from the prompt id so they stay the
+  // same across re-renders. Every character other than a letter, a digit or
+  // a hyphen becomes "_<hex code point>_", so two prompt ids never share ids.
+  function promptDomIds(promptId) {
+    const safe = String(promptId).replace(/[^A-Za-z0-9-]/gu, (c) => `_${c.codePointAt(0).toString(16)}_`);
+    const base = `prompt-${safe}`;
+    return { kicker: `${base}-kicker`, text: `${base}-text`, command: `${base}-command` };
+  }
+
+  const api = { createPromptState, refusedId, promptDomIds, ARM_MS, MIN_CONFIRM_MS, MIN_AGE_MS };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddlePrompt = api;
 })(typeof window !== 'undefined' ? window : globalThis);

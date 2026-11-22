@@ -39,7 +39,6 @@
   let colorOf = new Map();
   let collapsed = false; // set by main through onUiState
   let armTimer = null;
-  let idSeq = 0; // for aria-labelledby ids, unique per page
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -131,14 +130,17 @@
   // The frame every prompt card shares: a small kicker naming where it comes
   // from, then the card's own content, then the hint and the line that
   // drains over the hold (decorative: hidden from screen readers, and still
-  // when motion is reduced).
-  function promptCard(kind, kicker, id, content) {
+  // when motion is reduced). The group is named by the kicker and described
+  // by the elements whose ids are in describedBy (the question or the
+  // command); all ids come from the prompt id, so they hold across renders.
+  function promptCard(kind, kicker, id, content, describedBy) {
     const card = el('div', `prompt ${kind}`);
     const kick = el('p', 'prompt-kicker', kicker);
-    kick.id = `prompt-kicker-${++idSeq}`;
+    kick.id = window.HuddlePrompt.promptDomIds(id).kicker;
     kick.title = kicker;
     card.setAttribute('role', 'group');
     card.setAttribute('aria-labelledby', kick.id);
+    card.setAttribute('aria-describedby', describedBy.join(' '));
     const drain = el('span', 'prompt-drain');
     drain.setAttribute('aria-hidden', 'true');
     drain.dataset.promptId = id;
@@ -186,10 +188,10 @@
       done.addEventListener('click', () => sendAnswers(view.id, st.finishMulti()));
       options.append(done);
     }
-    return promptCard('ask', `Question from ${sessionName}`, view.id, [
-      el('p', 'prompt-text', str(q.question)),
-      options,
-    ]);
+    const ids = window.HuddlePrompt.promptDomIds(view.id);
+    const text = el('p', 'prompt-text', str(q.question));
+    text.id = ids.text;
+    return promptCard('ask', `Question from ${sessionName}`, view.id, [text, options], [ids.text]);
   }
 
   // Renders now, or once no pointer is down, so a press keeps its button.
@@ -234,11 +236,17 @@
     const actions = el('div', 'prompt-actions');
     actions.append(deny, allow);
     const tool = str(view.toolName) || 'Shell';
-    return promptCard('permission', `${tool} command from ${sessionName}`, view.id, [
-      el('p', 'prompt-text', 'Run this command?'),
-      command,
-      actions,
-    ]);
+    const ids = window.HuddlePrompt.promptDomIds(view.id);
+    const text = el('p', 'prompt-text', 'Run this command?');
+    text.id = ids.text;
+    command.id = ids.command;
+    return promptCard(
+      'permission',
+      `${tool} command from ${sessionName}`,
+      view.id,
+      [text, command, actions],
+      [ids.text, ids.command],
+    );
   }
 
   // The card for a held prompt, or null (none, malformed, or already answered).
