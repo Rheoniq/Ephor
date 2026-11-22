@@ -56,11 +56,40 @@ test('chooseWindow prefers a whole-name match over a longer folder name', () => 
   assert.equal(chooseWindow(wins, 'Old-Huddle'), '2');
 });
 
+test('chooseWindow: Huddle matches neither Huddle-terminal nor Old-Huddle', () => {
+  const wins = [win('1', 'Huddle-terminal - focus.js'), win('2', 'Old-Huddle - notes.md')];
+  assert.equal(chooseWindow(wins, 'Huddle'), null);
+});
+
+test('chooseWindow: api is not api-gateway', () => {
+  assert.equal(chooseWindow([win('1', 'api-gateway - Code'), win('2', 'api - Code')], 'api'), '2');
+  assert.equal(chooseWindow([win('1', 'api-gateway - Code'), win('2', 'web - Code')], 'api'), null);
+});
+
+test('chooseWindow: readme is not README.md', () => {
+  assert.equal(chooseWindow([win('1', 'README.md - other'), win('2', 'notes - readme')], 'readme'), '2');
+  assert.equal(chooseWindow([win('1', 'README.md - other'), win('2', 'b')], 'readme'), null);
+});
+
+test('chooseWindow matches a folder inside a path in the title', () => {
+  const wins = [win('1', 'Huddle-terminal'), win('2', '~/code/Huddle/src - Zed')];
+  assert.equal(chooseWindow(wins, 'Huddle'), '2');
+  assert.equal(chooseWindow(wins, 'src'), '2');
+  assert.equal(chooseWindow([win('1', 'x'), win('2', 'C:\\code\\Huddle\\src')], 'Huddle'), '2');
+});
+
 test('chooseWindow accepts the documented right boundaries', () => {
-  const rights = ['', ' x', '\t', ' \u2014 a', '\u2014a', '\u2013a', '|a', ':a', '[a]', ']', '(a)', ')'];
+  const rights = ['', ' x', '\t', ' \u2014 a', '\u2014a', '\u2013a', '|a', ':a', '[a]', ']', '(a)', ')', '/a', '\\a', ',a'];
   for (const r of rights) {
     const wins = [win('1', 'Huddle-terminal'), win('2', `Huddle${r}`)];
     assert.equal(chooseWindow(wins, 'Huddle'), '2', JSON.stringify(r));
+  }
+});
+
+test('chooseWindow rejects other characters on the right', () => {
+  for (const r of ['-a', '.md', '_x', 'x', '2', ';a', '!']) {
+    const wins = [win('1', 'a'), win('2', `Huddle${r}`)];
+    assert.equal(chooseWindow(wins, 'Huddle'), null, JSON.stringify(r));
   }
 });
 
@@ -71,6 +100,9 @@ test('chooseWindow needs a boundary on the left too', () => {
   assert.equal(chooseWindow(paths, 'Huddle'), '2');
   const brackets = [win('1', 'aHuddle]'), win('2', 'repo [Huddle] - x')];
   assert.equal(chooseWindow(brackets, 'Huddle'), '2');
+  for (const l of ['a', '1', '_', '-', '.']) {
+    assert.equal(chooseWindow([win('1', 'z'), win('2', `${l}Huddle - x`)], 'Huddle'), null, l);
+  }
 });
 
 test('chooseWindow ignores case, also for non-ASCII names', () => {
@@ -85,46 +117,56 @@ test('chooseWindow treats a letter next to a non-ASCII name as no boundary', () 
   assert.equal(chooseWindow(wins, 'caf\u00e9'), '2');
 });
 
-test('chooseWindow falls back to a plain substring, then to the first window', () => {
-  const sub = [win('1', 'a'), win('2', 'Huddle-terminal - x'), win('3', 'Old-Huddle-2')];
-  assert.equal(chooseWindow(sub, 'huddle'), '2');
-  const none = [win('7', 'first'), win('8', 'second')];
-  assert.equal(chooseWindow(none, 'Huddle'), '7');
+test('chooseWindow has no plain-substring tier', () => {
+  const wins = [win('1', 'a'), win('2', 'Huddle-terminal - x'), win('3', 'Old-Huddle-2')];
+  assert.equal(chooseWindow(wins, 'huddle'), null);
 });
 
-test('chooseWindow with an empty folder name takes the first window', () => {
-  const wins = [win('7', 'first'), win('8', 'second')];
-  assert.equal(chooseWindow(wins, ''), '7');
-  assert.equal(chooseWindow(wins, undefined), '7');
+test('chooseWindow: a cloaked window of the right project beats a normal window of another', () => {
+  const wins = [win('1', 'other - Zed', true), win('2', 'Huddle - Zed', false)];
+  assert.equal(chooseWindow(wins, 'Huddle'), '2');
 });
 
-test('chooseWindow with several windows of the same folder takes the topmost', () => {
-  const wins = [win('5', 'Huddle - a.js'), win('6', 'Huddle - b.js')];
-  assert.equal(chooseWindow(wins, 'Huddle'), '5');
+test('chooseWindow: among matches a normal window wins, then the topmost', () => {
+  const mixed = [win('1', 'Huddle - tool palette', false), win('2', 'Huddle - main', true)];
+  assert.equal(chooseWindow(mixed, 'Huddle'), '2');
+  const normals = [win('5', 'Huddle - a.js'), win('6', 'Huddle - b.js')];
+  assert.equal(chooseWindow(normals, 'Huddle'), '5');
+  const others = [win('7', 'Huddle - x', false), win('8', 'Huddle - y', false)];
+  assert.equal(chooseWindow(others, 'Huddle'), '7');
 });
 
-test('chooseWindow prefers normal windows and falls back to the rest', () => {
-  const mixed = [
-    win('1', 'Huddle - tool palette', false),
-    win('2', 'Huddle - on another desktop', false),
-    win('3', 'Settings', true),
-  ];
-  // A matching tool, owned or cloaked window loses to any normal window.
-  assert.equal(chooseWindow(mixed, 'Huddle'), '3');
-  const onlyOther = [win('1', 'Palette', false), win('2', 'Huddle - x', false)];
-  assert.equal(chooseWindow(onlyOther, 'Huddle'), '2');
-  assert.equal(chooseWindow(onlyOther, ''), '1');
-  const normals = [win('1', 'a', false), win('2', 'b', true), win('3', 'Huddle', true)];
-  assert.equal(chooseWindow(normals, 'Huddle'), '3');
-  assert.equal(chooseWindow(normals, 'zzz'), '2');
+test('chooseWindow: with no match it takes the one normal window, if there is exactly one', () => {
+  assert.equal(chooseWindow([win('7', 'something')], 'Huddle'), '7');
+  // Tool and cloaked windows do not count, and are never the fallback.
+  const mixed = [win('1', 'Palette', false), win('2', 'main', true), win('3', 'cloaked', false)];
+  assert.equal(chooseWindow(mixed, 'Huddle'), '2');
+});
+
+test('chooseWindow: with no match and several or no normal windows it gives null', () => {
+  assert.equal(chooseWindow([win('7', 'first'), win('8', 'second')], 'Huddle'), null);
+  assert.equal(chooseWindow([win('1', 'a', false), win('2', 'b', false)], 'Huddle'), null);
+  assert.equal(chooseWindow([win('1', 'a', false)], 'Huddle'), null);
+});
+
+test('chooseWindow with an empty folder name: only the one-normal-window rule', () => {
+  assert.equal(chooseWindow([win('7', 'first')], ''), '7');
+  assert.equal(chooseWindow([win('7', 'first')], undefined), '7');
+  assert.equal(chooseWindow([win('1', 'tool', false), win('7', 'first')], ''), '7');
+  assert.equal(chooseWindow([win('7', 'first'), win('8', 'second')], ''), null);
+  assert.equal(chooseWindow([win('7', 'first'), win('8', 'second')], undefined), null);
+  assert.equal(chooseWindow([win('1', 'tool', false)], ''), null);
 });
 
 test('chooseWindow handles odd input', () => {
   assert.equal(chooseWindow([], 'x'), null);
   assert.equal(chooseWindow(undefined, 'x'), null);
   assert.equal(chooseWindow([null, { hwnd: 'x1', title: 'a' }, { hwnd: '1' }], 'x'), null);
-  assert.equal(chooseWindow([{ hwnd: '9', title: 'a.b' }], '.'), '9');
+  assert.equal(chooseWindow([win('9', 'a.b')], '.'), '9');
   assert.equal(chooseWindow([win('1', 'a'), win('2', '$(x) [y]')], '$(x)'), '2');
+  assert.equal(chooseWindow([win('1', 'a'), win('2', 'b')], 42), null);
+  // A row without a normal flag is not a normal window.
+  assert.equal(chooseWindow([{ hwnd: '9', title: 'a' }], 'x'), null);
 });
 
 // --- focusWindowOf ---
@@ -183,6 +225,18 @@ test('focusWindowOf gives not-found when the process has no window', async () =>
   const other = fakeHost({ windows: [{ pid: 3000, hwnd: '5', title: 'x', normal: true }] });
   assert.equal(await focusWindowOf({ ownerPid: 2000 }, { run: other.run }), 'not-found');
   assert.equal(other.calls.length, 1);
+});
+
+test('focusWindowOf gives not-found, with no focus call, when several windows match nothing', async () => {
+  const { run, calls } = fakeHost({
+    windows: [
+      { pid: 2000, hwnd: '111', title: 'Huddle-terminal - a', normal: true },
+      { pid: 2000, hwnd: '222', title: 'other - b', normal: true },
+    ],
+  });
+  assert.equal(await focusWindowOf({ ownerPid: 2000, folderName: 'Huddle' }, { run }), 'not-found');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].input.mode, 'list');
 });
 
 test('focusWindowOf gives failed when the window list fails', async () => {

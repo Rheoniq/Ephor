@@ -189,8 +189,9 @@ function isValidHwnd(hwnd) {
 }
 
 // Characters that end a folder name inside a title: whitespace, an em or en
-// dash, a pipe, a colon, a bracket or a parenthesis (or the end of the title).
-const RIGHT_BOUNDARY = /[\s\u2014\u2013|:[\]()]/u;
+// dash, a pipe, a colon, a bracket, a parenthesis, a slash, a backslash or a
+// comma (or the end of the title).
+const RIGHT_BOUNDARY = /[\s\u2014\u2013|:[\]()/\\,]/u;
 // A letter, mark, digit or underscore continues a name. A hyphen or a dot
 // before the match also does, so "Huddle" does not match "Old-Huddle" or
 // "x.Huddle" as a whole name.
@@ -223,32 +224,33 @@ function boundaryMatch(lowerTitle, lowerFolder) {
   }
 }
 
-// The hwnd to focus among one process's windows (topmost first): normal
-// windows (not a tool window, no owner, not cloaked on another desktop) when
-// there are any, else all; within them the first whole-name match of
-// folderName (case-insensitive), else the first plain substring match, else
-// the first window. null when there is no well-formed window.
+// The hwnd to focus among one process's windows (topmost first), or null.
+// Every visible titled window is a candidate, normal or not. Only a
+// whole-name match of folderName counts (case-insensitive, see boundaryMatch;
+// there is no plain-substring match); among the matches a normal window (not
+// a tool window, no owner, not cloaked on another desktop) wins, then the
+// topmost. With no match, the process's only normal window is taken when it
+// has exactly one; otherwise null, so the caller reports 'not-found' instead
+// of focusing a window of another project.
 function chooseWindow(windows, folderName) {
   if (!Array.isArray(windows)) return null;
   const valid = windows.filter((w) => w && typeof w.title === 'string' && isValidHwnd(w.hwnd));
   if (valid.length === 0) return null;
-  const normal = valid.filter((w) => w.normal === true);
-  const pool = (normal.length ? normal : valid).map((w) => ({ hwnd: w.hwnd, title: w.title.toLowerCase() }));
   const folder = typeof folderName === 'string' ? folderName.toLowerCase() : '';
   if (folder) {
-    const whole = pool.find((w) => boundaryMatch(w.title, folder));
-    if (whole) return whole.hwnd;
-    const part = pool.find((w) => w.title.includes(folder));
-    if (part) return part.hwnd;
+    const matches = valid.filter((w) => boundaryMatch(w.title.toLowerCase(), folder));
+    if (matches.length) return (matches.find((w) => w.normal === true) || matches[0]).hwnd;
   }
-  return pool[0].hwnd;
+  const normal = valid.filter((w) => w.normal === true);
+  return normal.length === 1 ? normal[0].hwnd : null;
 }
 
 // Brings the best window of ownerPid to the front. Two script calls: list the
 // process's windows, choose one here (chooseWindow), then focus that hwnd; the
 // script checks again that it is a visible top-level window of ownerPid. The
 // folder name never reaches the script. Resolves 'focused', 'not-found' (no
-// such window, or it went away) or 'failed'. Never rejects.
+// window, no window that chooseWindow accepts, or it went away) or 'failed'.
+// Never rejects.
 async function focusWindowOf(target, deps = {}) {
   const { ownerPid, folderName } = target && typeof target === 'object' ? target : {};
   if (!isValidPid(ownerPid)) return 'failed';
