@@ -2,7 +2,9 @@
 
 Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Desktop (Claude Code) sessions that need attention, their status and how far each one is through its plan. The arrow on a session takes you to that session in Claude Desktop. The panel hides itself when nothing needs showing.
 
-Version 0.2.0 adds: header buttons to hide and quit, a hotkey, a collapsed pill you can drag, quiet mode, toasts, a pixel creature avatar per session, and answering Claude's option prompts and shell command approvals from the panel.
+Version 0.3.0 adds: a progress bar and a plan checklist per session, the last command a session requested, a distinct color for each visible session, and clearer question and permission cards.
+
+Version 0.2.0 added: header buttons to hide and quit, a hotkey, a collapsed pill you can drag, quiet mode, toasts, a pixel creature avatar per session, and answering Claude's option prompts and shell command approvals from the panel.
 
 ## Which sessions show
 
@@ -19,16 +21,20 @@ Plain idle sessions are never shown. "Finished" means the session went from busy
 
 Under each session's name is a thin bar with a label `current/total phase`, for example `3/5 Write tests`. `current` is the number of the step being worked on, so a plan with two steps done and the third active reads 3/5. A finished plan reads `7/7 Done`. The bar fills to current/total, so an active last step already shows a full bar; only the label tells `7/7 Review` from `7/7 Done`. A chip next to the label says "Needs you" (waiting) or "Finished".
 
+A busy session whose plan is complete (it works on a follow-up that made no new plan) shows its Working tag instead of the bar; its expanded checklist still shows every step checked. A waiting or finished session with a complete plan keeps the bar, reading `7/7 Done`.
+
 What feeds it:
 
 - The agent's own plan, recorded in the session transcript each time the agent calls its `update_plan` tool.
+- The agent's end-of-turn `wrap_up` call, which checks the whole plan off: a turn that ends reads `7/7 Done`. A later `update_plan` call starts a new plan or edits the checked-off one.
 - A session that never makes a plan shows its status label instead (Working, Needs you or Finished).
 - The plan comes from Desktop's undocumented transcript format. If that format changes, the bar disappears and the status label shows; nothing else breaks.
 
 Click a session to expand it:
 
 - The whole plan as a checklist: a checked box for done steps, a spinner for the active step, an empty box for steps still to do. At most 30 steps are shown.
-- Below it, the last shell command the session ran, on one line (cut at 160 characters). Without a plan only that line shows, or "No plan yet".
+- Below it, "Last command requested:" and the last shell command the session asked to run, on one line (cut at 160 characters). It is the last one requested, not proof that it ran: a denied command, or the one a card is asking about, shows here too. Without a plan only that line shows, or "No plan yet".
+- Control and invisible characters in plan steps and in the command (bidi marks, zero-width characters, escape codes, variation selectors, blank-looking characters) show as `?`, so they cannot change what the line seems to say.
 
 Each row has the arrow (open in Claude Desktop) and the x (dismiss) stacked on its right edge.
 
@@ -64,7 +70,7 @@ The panel stays above borderless full-screen windows (such as a browser video in
 
 ## Answering from the panel
 
-When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop", and a line along its bottom edge that drains over the 15 second hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
+When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop (this card closes after 15 s)", and a line along its bottom edge that drains over the 15 second hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
 
 - **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
 - **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
@@ -97,7 +103,7 @@ Desktop stays the fallback for everything:
 
 Answering needs two `http` hooks in `~/.claude/settings.json` and the token in the user environment variable `HUDDLE_HOOK_TOKEN`. Huddle never edits that file or sets the variable. The exact entries, the token steps and the verified facts are in [docs/superpowers/notes/hook-setup.md](docs/superpowers/notes/hook-setup.md); the JSON shape is in `docs/superpowers/notes/hook-settings.json`.
 
-The token is 64 hex characters. The hook gate test used a shorter test token, so after the first start of 0.2.0 run the tray "Copy token setup command" again, paste and run the `setx` line, then restart Claude Desktop fully. The copied token can stay in Windows clipboard history (Win+V) if that is on; clear the entry.
+The token is 64 hex characters. The hook gate test used a shorter test token, so after the first start of 0.2.0 or later run the tray "Copy token setup command" again, paste and run the `setx` line, then restart Claude Desktop fully. The copied token can stay in Windows clipboard history (Win+V) if that is on; clear the entry.
 
 Without the hooks or the token, Huddle works as a viewer and Desktop shows every prompt.
 
@@ -119,14 +125,14 @@ Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file
 
 ## Running next to the first version
 
-Both versions use the app name Huddle, so they share the settings folder and the single-instance lock. Close the first version (tray, Quit) before starting 0.2.0; otherwise 0.2.0 exits silently.
+Both versions use the app name Huddle, so they share the settings folder and the single-instance lock. Close the first version (tray, Quit) before starting 0.3.0; otherwise 0.3.0 exits silently.
 
 ## How it finds sessions
 
 Huddle only reads local files; it never writes to them.
 
 - Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped.
-- Plan and last command: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan and the latest shell command are found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped.
+- Plan and last command: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan and the latest shell command are found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped. A file that was rewritten rather than appended to, or that grew by more than 8 MiB, is read again from the end.
 
 ## Run
 
@@ -216,4 +222,4 @@ The hook gate ran before the `Origin` and `Host` checks were added: the server n
 
 Huddle reads `~/.claude` on your own machine. It makes no network requests beyond `127.0.0.1` and sends nothing anywhere. The hook server listens on `127.0.0.1` only and needs the token.
 
-A command card shows the command only while the prompt is open; it is never stored or logged.
+A command card shows the command only while the prompt is open; it is never stored or logged. The "Last command requested" line (cut to 160 characters) and the plan steps are read from the local transcript and kept in Huddle's memory while the session is shown; they are never written to disk, logged or sent anywhere.
