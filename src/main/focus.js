@@ -94,4 +94,171 @@ async function openClaudeDesktop(hostSessionId, deps = defaultDeps()) {
   return (await focusWithTimeout(deps.focusWindow, timeoutMs)) ? 'focus' : 'failed';
 }
 
-module.exports = { openClaudeDesktop, deepLinkUrl, focusClaudeWindow, SESSION_ID_RE };
+// --- Terminal sessions: the window of the process that hosts the session ---
+
+const FOCUS_WINDOW_SCRIPT = path.join(__dirname, 'focus-window.ps1');
+const PS_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
+const FOCUS_WINDOW_TIMEOUT_MS = 8000;
+const LIST_WINDOWS_TIMEOUT_MS = 5000;
+// Extra time after the child's own timeout before the result is given up:
+// the execFile callback may never fire if csc.exe (Add-Type) holds the pipes.
+const HARD_TIMEOUT_GRACE_MS = 250;
+const MAX_BUFFER = 4 * 1024 * 1024;
+// Windows pids are DWORDs.
+const MAX_PID = 0xffffffff;
+// NTFS caps one path segment at 255 UTF-16 units; 260 leaves room.
+const MAX_FOLDER_NAME = 260;
+const MAX_LIST_PIDS = 64;
+const MAX_TITLE = 512;
+const HWND_RE = /^[0-9]{1,20}$/;
+
+function isValidPid(pid) {
+  return Number.isSafeInteger(pid) && pid > 0 && pid <= MAX_PID;
+}
+
+// JSON with every character outside printable ASCII written as \uXXXX, so the
+// bytes on stdin are plain ASCII and no console code page can change them.
+function asciiJson(value) {
+  return JSON.stringify(value).replace(
+    /[^\x20-\x7e]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
+// Runs fixed script text through the absolute-path PowerShell. The text goes
+// in as -EncodedCommand; data goes only to stdin as ASCII JSON, never onto the
+// command line. Resolves { code, stdout } when the process exits, null on a
+// spawn error, a kill or a timeout. Never rejects.
+function runPowerShell(scriptText, input, { timeoutMs = LIST_WINDOWS_TIMEOUT_MS, execFile: exec = execFile } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    timer = setTimeout(() => finish(null), timeoutMs + HARD_TIMEOUT_GRACE_MS);
+    let child;
+    try {
+      const encoded = Buffer.from(String(scriptText), 'utf16le').toString('base64');
+      child = exec(
+        POWERSHELL_EXE,
+        [...PS_ARGS, encoded],
+        { windowsHide: true, timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+        (err, stdout) => {
+          const out = stdout == null ? '' : String(stdout);
+          if (!err) return finish({ code: 0, stdout: out });
+          // A kill (timeout) or a spawn error has no numeric exit code.
+          if (err.killed || typeof err.code !== 'number') return finish(null);
+          return finish({ code: err.code, stdout: out });
+        },
+      );
+    } catch {
+      finish(null);
+      return;
+    }
+    try {
+      if (child && child.stdin) {
+        child.stdin.on('error', () => {});
+        // Always close stdin: powershell.exe may otherwise wait for it.
+        if (input === undefined) child.stdin.end();
+        else child.stdin.end(asciiJson(input));
+      }
+    } catch {
+      // The child is gone; its callback or the timer settles the promise.
+    }
+  });
+}
+
+function readFocusWindowScript() {
+  try {
+    return fs.readFileSync(FOCUS_WINDOW_SCRIPT, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// Brings the best window of ownerPid to the front: a visible, titled top-level
+// window whose title contains folderName (case-insensitive), else the first.
+// Resolves 'focused', 'not-found' (no such window) or 'failed'. Never rejects.
+async function focusWindowOf(target, deps = {}) {
+  const { ownerPid, folderName } = target && typeof target === 'object' ? target : {};
+  if (!isValidPid(ownerPid)) return 'failed';
+  const folder = folderName == null ? '' : folderName;
+  if (typeof folder !== 'string' || folder.length > MAX_FOLDER_NAME) return 'failed';
+  const script = readFocusWindowScript();
+  if (script === null) return 'failed';
+  const run = (deps && deps.run) || runPowerShell;
+  let res;
+  try {
+    res = await run(script, { mode: 'focus', ownerPid, folderName: folder }, { timeoutMs: FOCUS_WINDOW_TIMEOUT_MS });
+  } catch {
+    return 'failed';
+  }
+  if (!res || typeof res !== 'object') return 'failed';
+  if (res.code === 0) return 'focused';
+  if (res.code === 2) return 'not-found';
+  return 'failed';
+}
+
+// The script's list output as Map<pid, [{ hwnd, title }]> in the script's
+// order (topmost first), only for asked pids, only well-formed rows.
+function parseWindowList(text, pids) {
+  const out = new Map();
+  if (typeof text !== 'string') return out;
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return out;
+  }
+  if (data && typeof data === 'object' && !Array.isArray(data)) data = [data];
+  if (!Array.isArray(data)) return out;
+  const wanted = new Set(Array.isArray(pids) ? pids : []);
+  for (const row of data) {
+    if (!row || typeof row !== 'object') continue;
+    const { pid, hwnd, title } = row;
+    if (!wanted.has(pid)) continue;
+    if (typeof hwnd !== 'string' || !HWND_RE.test(hwnd)) continue;
+    if (typeof title !== 'string' || title.length === 0) continue;
+    if (!out.has(pid)) out.set(pid, []);
+    out.get(pid).push({ hwnd, title: title.slice(0, MAX_TITLE) });
+  }
+  return out;
+}
+
+// The visible, titled top-level windows of each pid, in one PowerShell call.
+// Pids without windows are absent from the map. Never rejects: any failure
+// gives an empty map.
+async function windowsOf(pids, deps = {}) {
+  if (!Array.isArray(pids)) return new Map();
+  const valid = [...new Set(pids.filter(isValidPid))].slice(0, MAX_LIST_PIDS);
+  if (valid.length === 0) return new Map();
+  const script = readFocusWindowScript();
+  if (script === null) return new Map();
+  const run = (deps && deps.run) || runPowerShell;
+  let res;
+  try {
+    res = await run(script, { mode: 'list', pids: valid }, { timeoutMs: LIST_WINDOWS_TIMEOUT_MS });
+  } catch {
+    return new Map();
+  }
+  if (!res || res.code !== 0) return new Map();
+  return parseWindowList(res.stdout, valid);
+}
+
+module.exports = {
+  openClaudeDesktop,
+  deepLinkUrl,
+  focusClaudeWindow,
+  SESSION_ID_RE,
+  focusWindowOf,
+  windowsOf,
+  runPowerShell,
+  asciiJson,
+  parseWindowList,
+  isValidPid,
+  POWERSHELL_EXE,
+};
