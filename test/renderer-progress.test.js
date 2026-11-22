@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { barLabel, fillPercent, planRows, cutText, PHASE_MAX } = require('../src/renderer/progress');
+const { barLabel, fillPercent, planRows, cutText, showsBar, PHASE_MAX } = require('../src/renderer/progress');
 
 // A plan as the snapshot carries it (panel.js snapshotPlan): the items before
 // `current` are completed, item `current` is in progress, the rest pending.
@@ -118,6 +118,32 @@ test('fillPercent: a complete plan is full even with a stale current', () => {
   const p = plan(SEVEN, 8);
   p.current = 3;
   assert.equal(fillPercent(p), 100);
+});
+
+test('showsBar: a busy session with a complete plan shows its Working tag, not the bar', () => {
+  // A follow-up that made no new plan: "7/7 Done" with a full bar would hide
+  // that the session is working.
+  assert.equal(showsBar(plan(SEVEN, 8), 'busy'), false);
+});
+
+test('showsBar: waiting, idle and finished sessions with a complete plan show the bar', () => {
+  assert.equal(showsBar(plan(SEVEN, 8), 'waiting'), true);
+  assert.equal(showsBar(plan(SEVEN, 8), 'idle'), true);
+  assert.equal(showsBar(plan(SEVEN, 8), 'finished'), true);
+});
+
+test('showsBar: an active plan shows the bar for every status', () => {
+  for (const status of ['busy', 'waiting', 'idle', 'finished']) {
+    assert.equal(showsBar(plan(SEVEN, 5), status), true, status);
+    assert.equal(showsBar(plan(SEVEN, 7), status), true, `${status}, last step active`);
+  }
+});
+
+test('showsBar: no plan, or a malformed one, shows no bar', () => {
+  for (const bad of [null, undefined, {}, { total: 3, current: 4, items: [], state: 'active' }]) {
+    assert.equal(showsBar(bad, 'busy'), false, JSON.stringify(bad));
+    assert.equal(showsBar(bad, 'waiting'), false, JSON.stringify(bad));
+  }
 });
 
 test('planRows: one row per item in order, marked by status', () => {

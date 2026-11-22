@@ -71,11 +71,13 @@ function demoSessions() {
     },
     {
       ...base,
+      // Busy past its complete plan (a follow-up that made no new plan): the
+      // panel shows Working with no bar; the checklist is all checked.
       sessionId: 'demo-drafting',
       hostSessionId: 'local_demo-drafting',
       name: 'Draft the newsletter for December',
       status: 'busy',
-      planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 4),
+      planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 7),
       lastCommand: 'git diff --stat drafts/december.md',
     },
   ];

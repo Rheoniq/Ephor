@@ -1,7 +1,8 @@
 'use strict';
 
 // Pure helpers for a session's plan in the panel: the bar label
-// ("5/7 Animations", "7/7 Done"), how full the bar is, and the checklist rows.
+// ("5/7 Animations", "7/7 Done"), whether the bar shows, how full it is, and
+// the checklist rows.
 // The plan comes from the snapshot (panel.js snapshotPlan); its text is
 // model output, so the renderer sets it with textContent only. Plain script:
 // in the page it sets window.HuddleProgress, under Node it is a CommonJS
@@ -82,6 +83,16 @@
     };
   }
 
+  // Whether the status line shows the plan bar for a session with this
+  // status ('busy', 'waiting', 'idle' or 'finished'). A busy session whose
+  // plan is complete is working past its plan (a follow-up that made no new
+  // plan), so it shows its Working tag instead of a full bar reading Done;
+  // the expanded checklist still shows the plan. No plan, no bar.
+  function showsBar(plan, status) {
+    if (!isPlan(plan)) return false;
+    return !(status === 'busy' && isComplete(plan));
+  }
+
   // How full the bar is, 0 to 100: the current step over the total, or all
   // of it for a complete plan. Anything malformed is empty.
   function fillPercent(plan) {
@@ -114,7 +125,7 @@
     return rows;
   }
 
-  const api = { barLabel, fillPercent, planRows, cutText, isPlan, PHASE_MAX };
+  const api = { barLabel, showsBar, fillPercent, planRows, cutText, isPlan, PHASE_MAX };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddleProgress = api;
 })(typeof window !== 'undefined' ? window : globalThis);

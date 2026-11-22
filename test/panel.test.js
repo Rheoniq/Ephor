@@ -309,7 +309,12 @@ test('demo sessions: the planned plans, and a command on each', () => {
     );
   assert.ok(active(7, 5, 'Animations'));
   assert.ok(active(5, 2, 'Watching'));
-  assert.ok(active(6, 4, 'Drafting'));
   assert.ok(shownPlans.some((p) => p && p.state === 'complete' && p.current === p.total));
   assert.ok(shownPlans.some((p) => p === null));
+  // A finished session with a complete plan (4/4 Done) and a busy one past
+  // its complete plan (Working, no bar).
+  const completeFor = (pred) => sessions.some((s) => pred(s) && (snapshotPlan(s.planItems) || {}).state === 'complete');
+  assert.ok(completeFor((s) => s.status === 'idle' && s.before === 'busy'));
+  assert.ok(completeFor((s) => s.status === 'busy'));
+  assert.ok(sessions.length <= 6);
 });

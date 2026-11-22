@@ -128,11 +128,13 @@
   }
 
   // The frame every prompt card shares: a small kicker naming where it comes
-  // from, then the card's own content, then the hint and the line that
-  // drains over the hold (decorative: hidden from screen readers, and still
-  // when motion is reduced). The group is named by the kicker and described
-  // by the elements whose ids are in describedBy (the question or the
-  // command); all ids come from the prompt id, so they hold across renders.
+  // from, then the card's own content, then the hint (which also says the
+  // card closes after the 15 s hold, in words everyone gets) and the line
+  // that drains over the hold (decorative: hidden from screen readers, and
+  // still when motion is reduced). The group is named by the kicker and
+  // described by the elements whose ids are in describedBy (the question or
+  // the command); all ids come from the prompt id, so they hold across
+  // renders.
   function promptCard(kind, kicker, id, content, describedBy) {
     const card = el('div', `prompt ${kind}`);
     const kick = el('p', 'prompt-kicker', kicker);
@@ -144,7 +146,8 @@
     const drain = el('span', 'prompt-drain');
     drain.setAttribute('aria-hidden', 'true');
     drain.dataset.promptId = id;
-    card.append(kick, ...content, el('p', 'prompt-hint', 'Or answer in Claude Desktop'), drain);
+    const hint = el('p', 'prompt-hint', 'Or answer in Claude Desktop (this card closes after 15 s)');
+    card.append(kick, ...content, hint, drain);
     return card;
   }
 
@@ -282,7 +285,8 @@
   }
 
   // The status under the name: the plan bar with "5/7 Animations" and a chip
-  // for waiting or finished, or the plain status tag when there is no plan.
+  // for waiting or finished, or the plain status tag when `label` is null (no
+  // plan, or a busy session past its complete plan: HuddleProgress.showsBar).
   // Hidden from screen readers: the body button's name says the same, with
   // the whole phase. Returns null when there is nothing to show.
   function statusLine(plan, label, kind, color) {
@@ -306,7 +310,9 @@
 
   // The expanded view: every plan step (a checked box when done, a spinner
   // for the active one, an empty box when still to do), then the last
-  // command. Without a plan only the command shows, or "No plan yet".
+  // command requested (the call is written before it is allowed, so it may
+  // have been denied, or be the one a prompt card asks about). Without a plan
+  // only the command shows, or "No plan yet".
   function renderDetails(s, label, color) {
     const box = el('div', 'details');
     const rows = window.HuddleProgress.planRows(s.plan);
@@ -326,7 +332,7 @@
     const cmd = str(s.lastCommand);
     if (cmd) {
       const line = el('p', 'last-command');
-      line.append(el('span', 'last-label', 'Last command:'), ' ', el('span', 'last-cmd', cmd));
+      line.append(el('span', 'last-label', 'Last command requested:'), ' ', el('span', 'last-cmd', cmd));
       box.append(line);
     } else if (rows.length === 0) {
       box.append(el('p', 'no-plan', 'No plan yet'));
@@ -353,7 +359,7 @@
     // A held prompt sits right under the name, above the status line, so it
     // is the first thing seen; the status line then moves below the card.
     const card = s.prompt ? renderPrompt(s.prompt, name) : null;
-    const line = statusLine(s.plan, bar, kind, color);
+    const line = statusLine(s.plan, window.HuddleProgress.showsBar(s.plan, kind) ? bar : null, kind, color);
 
     const body = el('button', 'buddy-body');
     body.type = 'button';
