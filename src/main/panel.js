@@ -37,9 +37,12 @@ function createSnapshotGate() {
 // session that just finished and was not looked at yet (finished.js).
 // `plan` (from snapshotPlan) and `lastCommand` are always present, null when
 // unknown, so the snapshot keeps one shape. `source` is 'terminal' or
-// 'desktop' (the default); `host` is always null for now. Both come after the
-// older fields so a desktop session's JSON only grows at the end.
-function toSnapshotSession(s, prompt, finished, plan, lastCommand) {
+// 'desktop' (the default); `host` is the friendly name of the program that
+// hosts a terminal session (open-target.js), null while unknown and always
+// null for a desktop session. Both come after the older fields so a desktop
+// session's JSON only grows at the end.
+function toSnapshotSession(s, prompt, finished, plan, lastCommand, host) {
+  const source = s.source === 'terminal' ? 'terminal' : 'desktop';
   const out = {
     sessionId: s.sessionId,
     hostSessionId: s.hostSessionId,
@@ -48,8 +51,8 @@ function toSnapshotSession(s, prompt, finished, plan, lastCommand) {
     finished: finished === true,
     plan: plan || null,
     lastCommand: typeof lastCommand === 'string' && lastCommand ? lastCommand : null,
-    source: s.source === 'terminal' ? 'terminal' : 'desktop',
-    host: null,
+    source,
+    host: source === 'terminal' && typeof host === 'string' && host ? host : null,
   };
   if (prompt) out.prompt = prompt;
   return out;

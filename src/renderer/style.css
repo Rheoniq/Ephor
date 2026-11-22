@@ -259,6 +259,30 @@ button:focus-visible {
   color: var(--fg);
 }
 
+/* A terminal session's name with the host badge after it. The name gives
+   way first; the badge keeps up to 10em and is cut with an ellipsis. */
+.name-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.name-line .name { flex: 0 1 auto; }
+
+.host-badge {
+  flex: 0 0 auto;
+  max-width: 10em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--muted);
+  font: 600 10.5px/1.5 var(--sans);
+}
+
 /* Status label under the name, led by a small mark: a pulsing olive pixel
    for busy, a clay pixel for waiting, a check for finished. */
 .state-label {

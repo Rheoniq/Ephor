@@ -408,3 +408,32 @@ test('demo sessions: two terminal sessions, a busy one with a plan and a finishe
     assert.equal(typeof s.hostSessionId, 'string', s.sessionId);
   }
 });
+
+test('toSnapshotSession: a terminal session carries the host name it is given', () => {
+  const t = { sessionId: 'b', name: 'N', status: 'busy', source: 'terminal' };
+  assert.equal(toSnapshotSession(t, undefined, false, null, null, 'Zed').host, 'Zed');
+  assert.equal(toSnapshotSession(t, undefined, false, null, null, null).host, null);
+  assert.equal(toSnapshotSession(t, undefined, false, null, null, '').host, null);
+  assert.equal(toSnapshotSession(t, undefined, false, null, null, 42).host, null);
+  assert.equal(toSnapshotSession(t).host, null);
+});
+
+test('toSnapshotSession: a desktop session never carries a host', () => {
+  const d = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy', source: 'desktop' };
+  assert.equal(toSnapshotSession(d, undefined, false, null, null, 'Zed').host, null);
+});
+
+test('toSnapshotSession: the host stays before an optional prompt', () => {
+  const t = { sessionId: 'b', name: 'N', status: 'waiting', source: 'terminal' };
+  const keys = Object.keys(toSnapshotSession(t, { kind: 'x' }, false, null, null, 'Zed'));
+  assert.deepEqual(keys.slice(-3), ['source', 'host', 'prompt']);
+});
+
+test('demo: the terminal demo sessions carry the hosts Zed and VS Code', () => {
+  const hosts = demoSessions()
+    .filter((s) => s.source === 'terminal')
+    .map((s) => s.host)
+    .sort();
+  assert.deepEqual(hosts, ['VS Code', 'Zed']);
+  for (const s of demoSessions().filter((d) => d.source !== 'terminal')) assert.equal(s.host, undefined);
+});

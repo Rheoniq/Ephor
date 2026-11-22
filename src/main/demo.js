@@ -77,6 +77,9 @@ function demoSessions() {
       // plan): the panel shows Working with no bar; the checklist is all
       // checked.
       sessionId: 'demo-drafting',
+      // `host` is demo only: real terminal sessions get theirs from the
+      // host lookup in main.
+      host: 'Zed',
       name: 'Draft the newsletter for December',
       status: 'busy',
       planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 7),
@@ -86,6 +89,7 @@ function demoSessions() {
       ...terminal,
       // Terminal, finished like demo-finished (busy before, idle now).
       sessionId: 'demo-term-finished',
+      host: 'VS Code',
       name: 'Rename the client folders to the new scheme',
       status: 'idle',
       before: 'busy',

@@ -9,8 +9,10 @@ contextBridge.exposeInMainWorld('huddle', {
   dismiss(id) {
     ipcRenderer.send('huddle:dismiss', id);
   },
-  open(hostSessionId) {
-    return ipcRenderer.invoke('huddle:open', hostSessionId);
+  // { kind: 'desktop', hostSessionId } or { kind: 'terminal', sessionId };
+  // main checks it against the last snapshot.
+  open(target) {
+    return ipcRenderer.invoke('huddle:open', target);
   },
   reportHeight(h) {
     ipcRenderer.send('huddle:content-size', h);

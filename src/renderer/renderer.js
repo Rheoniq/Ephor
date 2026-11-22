@@ -368,7 +368,17 @@
     body.title = name;
     const avatar = window.HuddleAvatar.createAvatar(document, id, status, colorOf.get(id));
     const nameBox = el('span', 'name-box');
-    nameBox.append(el('span', 'name', name));
+    // A terminal session shows the program that hosts it (Zed, VS Code) as
+    // a small badge after the name; nothing while it is not known yet.
+    const isTerminal = s.source === 'terminal';
+    const host = isTerminal ? str(s.host) : '';
+    if (host) {
+      const nameLine = el('span', 'name-line');
+      nameLine.append(el('span', 'name', name), el('span', 'host-badge', host));
+      nameBox.append(nameLine);
+    } else {
+      nameBox.append(el('span', 'name', name));
+    }
     // Screen readers hear the status first and the whole plan step last.
     if (bar) nameBox.append(el('span', 'sr-only', `, ${bar.spoken}`));
     if (line && !card) nameBox.append(line);
@@ -382,10 +392,25 @@
     const open = el('button', 'icon-btn open', '→');
     open.type = 'button';
     open.dataset.role = 'open';
-    open.setAttribute('aria-label', `Open ${name} in Claude Desktop`);
-    open.title = 'Open in Claude Desktop';
+    // Terminal sessions: the arrow brings the host window to the front. With
+    // the host not known yet it stays enabled and main looks it up on click.
+    // The label names the session like the desktop one always did.
+    let openTip = 'Open in Claude Desktop';
+    let openLabel = `Open ${name} in Claude Desktop`;
+    if (isTerminal && host) {
+      openTip = `Open in ${host}`;
+      openLabel = `Open ${name} in ${host}`;
+    } else if (isTerminal) {
+      openTip = 'Open the terminal window';
+      openLabel = `Open the terminal window of ${name}`;
+    }
+    open.setAttribute('aria-label', openLabel);
+    open.title = openTip;
     open.addEventListener('click', () => {
-      window.huddle.open(str(s.hostSessionId)).catch(() => {});
+      const target = isTerminal
+        ? { kind: 'terminal', sessionId: id }
+        : { kind: 'desktop', hostSessionId: str(s.hostSessionId) };
+      window.huddle.open(target).catch(() => {});
     });
 
     const dismiss = el('button', 'icon-btn dismiss', '×');

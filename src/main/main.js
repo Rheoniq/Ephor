@@ -22,14 +22,15 @@ const {
 const { readSessions, pidIsAlive } = require('./sessions');
 const { createDismissals } = require('./dismissals');
 const { transcriptPath } = require('./paths');
-const { openClaudeDesktop } = require('./focus');
+const { openClaudeDesktop, focusWindowOf } = require('./focus');
+const { createHostResolver, loadProcessTable, windowsOf, folderNameOf } = require('./host');
+const { parseOpenRequest, openSucceeded, createHostLookups } = require('./open-target');
 const { createGrace } = require('./grace');
 const { createFinished } = require('./finished');
 const {
   clampHeight,
   createSnapshotGate,
   toSnapshotSession,
-  findOpenable,
   snapshotPlan,
   createPlanSource,
   isShown,
@@ -82,8 +83,6 @@ const WIN_WIDTH = 360;
 const PILL_WIDTH = 96;
 const WIN_HEIGHT = 120;
 const MARGIN = 12;
-
-const MAX_HOST_ID_LEN = 100;
 
 // The toast is its own non-focusable window, top-right below the panel.
 const TOAST_WIDTH = 340;
@@ -152,6 +151,21 @@ const panelHealth = createRendererHealth();
 let panelReloadTimer = null;
 let lastKept = []; // kept sessions from the last read, with cwd
 let lastVisible = []; // the kept sessions that are not dismissed
+// Which program hosts each terminal session (Zed, VS Code, a terminal), for
+// the badge and the arrow. Not in demo mode: no process table is read there.
+const hostResolver = DEMO
+  ? null
+  : createHostResolver({ loadTable: () => loadProcessTable(), hasVisibleWindow: (pids) => windowsOf(pids) });
+// Looked up lazily for shown terminal sessions only, never awaited by a
+// refresh; a name that lands asks for one more refresh.
+const hostLookups = DEMO
+  ? null
+  : createHostLookups({
+      resolve: (pid, startKey, options) => hostResolver.resolve(pid, startKey, options),
+      onResolved: () => {
+        if (!quitting) scheduleRefresh();
+      },
+    });
 
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 
@@ -206,6 +220,7 @@ function buildDemoSnapshot() {
       finished.isFinished(s.sessionId),
       snapshotPlan(s.planItems),
       s.lastCommand,
+      s.host,
     ),
   );
   return { kept, snapshot: { sessions } };
@@ -221,6 +236,7 @@ function buildSnapshot() {
   dismissals.prune(keptIds);
   finished.update(kept);
   planSource.prune(keptIds);
+  hostLookups.prune(keptIds);
   const visible = notDismissed(kept);
   lastKept = kept;
   lastVisible = visible;
@@ -236,6 +252,7 @@ function buildSnapshot() {
       finished.isFinished(s.sessionId),
       plan,
       lastCommand,
+      hostLookups.hostFor(s),
     );
   });
   return { kept, snapshot: { sessions } };
@@ -1091,28 +1108,46 @@ ipcMain.on('huddle:answer', (event, payload) => {
   scheduleRefresh();
 });
 
-ipcMain.handle('huddle:open', async (event, hostSessionId) => {
+// Opens a shown session: { kind: 'desktop', hostSessionId } in Claude
+// Desktop, or { kind: 'terminal', sessionId } by bringing its host window
+// to the front (an older plain hostSessionId string still means desktop).
+// Only an id from the last snapshot counts. For a terminal session the pid,
+// cwd and procStart come from main's own registry copy, never from the
+// renderer.
+ipcMain.handle('huddle:open', async (event, request) => {
   if (!fromOurWindow(event)) return 'failed';
-  if (typeof hostSessionId !== 'string' || hostSessionId.length > MAX_HOST_ID_LEN) return 'failed';
-  // Desktop sessions only: a terminal session has no hostSessionId and is
-  // refused here.
-  const shown = findOpenable(lastSnapshot.sessions, hostSessionId);
-  if (!shown) return 'failed';
+  const target = parseOpenRequest(request, lastSnapshot.sessions);
+  if (!target) return 'failed';
+  const shown = target.session;
   let result;
   if (DEMO) {
-    console.log(`[huddle] demo: open ${hostSessionId} (no-op)`);
+    console.log(`[huddle] demo: open ${target.kind} ${target.kind === 'desktop' ? shown.hostSessionId : shown.sessionId} (no-op)`);
     result = 'demo';
+  } else if (target.kind === 'desktop') {
+    result = await openClaudeDesktop(shown.hostSessionId);
   } else {
-    result = await openClaudeDesktop(hostSessionId);
+    result = await openTerminalSession(shown.sessionId);
   }
   // A successful open counts as looking at the session: a finished buddy
-  // leaves the panel on the next refresh. A failed open keeps it.
-  if (result !== 'failed' && shown.finished) {
+  // leaves the panel on the next refresh. A failed open, or a host window
+  // that was not found, keeps it.
+  if (openSucceeded(result) && shown.finished) {
     finished.markSeen(shown.sessionId);
     scheduleRefresh();
   }
   return result;
 });
+
+// Brings the window that hosts a terminal session to the front:
+// 'focused', 'not-found' (no host or no window) or 'failed'. The host is
+// resolved again on the click (revalidate), so a stale badge never decides.
+async function openTerminalSession(sessionId) {
+  const reg = lastKept.find((s) => s.sessionId === sessionId && s.source === 'terminal');
+  if (!reg || !hostResolver) return 'failed';
+  const host = await hostResolver.resolve(reg.pid, reg.procStart, { revalidate: true });
+  if (!host) return 'not-found';
+  return focusWindowOf({ ownerPid: host.ownerPid, folderName: folderNameOf(reg.cwd) });
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
