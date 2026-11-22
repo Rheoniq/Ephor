@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { normalizeItems, applyUpdate, replayPlan, summarize } = require('../src/main/plan');
+const { normalizeItems, applyUpdate, replayPlan, summarize, WRAP_UP } = require('../src/main/plan');
 
 const P = 'pending';
 const A = 'in_progress';
@@ -170,4 +170,44 @@ test('applyUpdate with the same index in done and start leaves it in progress', 
 
 test('summarize handles a single item', () => {
   assert.deepEqual(summarize(list(A)), { total: 1, current: 1, phase: 'Step 1', done: 0, state: 'active' });
+});
+
+// wrap_up: the end-of-turn call that checks the whole plan off
+
+test('applyUpdate with WRAP_UP completes every item without mutating the input', () => {
+  const before = list(C, A, P, P);
+  const out = applyUpdate(before, WRAP_UP);
+  assert.deepEqual(statuses(out), [C, C, C, C]);
+  assert.deepEqual(out.map((i) => i.content), ['Step 1', 'Step 2', 'Step 3', 'Step 4']);
+  assert.deepEqual(statuses(before), [C, A, P, P]);
+  assert.equal(summarize(out).state, 'complete');
+});
+
+test('applyUpdate with WRAP_UP before any plan changes nothing', () => {
+  assert.equal(applyUpdate(null, WRAP_UP), null);
+  assert.equal(replayPlan([WRAP_UP]), null);
+  assert.deepEqual(applyUpdate([], WRAP_UP), []);
+});
+
+test('WRAP_UP is a marker only the reader makes: a look-alike input is ignored', () => {
+  const items = list(A, P);
+  assert.equal(applyUpdate(items, { __wrapUp: true }), items);
+  assert.equal(applyUpdate(items, JSON.parse(JSON.stringify({ wrapUp: true }))), items);
+  assert.ok(Object.isFrozen(WRAP_UP));
+});
+
+test('replayPlan: a wrap_up then a new items call gives the new plan', () => {
+  const out = replayPlan([
+    { items: [{ content: 'old', status: 'in_progress' }] },
+    WRAP_UP,
+    { items: [{ content: 'n1', status: 'in_progress' }, { content: 'n2', status: 'pending' }] },
+  ]);
+  assert.deepEqual(out, [{ content: 'n1', status: A }, { content: 'n2', status: P }]);
+});
+
+test('replayPlan: updates after a wrap_up edit the completed plan in file order', () => {
+  const three = { items: [{ content: 'a', status: 'in_progress' }, { content: 'b' }, { content: 'c' }] };
+  assert.deepEqual(statuses(replayPlan([three, WRAP_UP, { start: 2 }])), [C, A, C]);
+  assert.deepEqual(statuses(replayPlan([three, { advance: true }, WRAP_UP])), [C, C, C]);
+  assert.deepEqual(statuses(replayPlan([three, WRAP_UP, { advance: true }])), [C, C, C]);
 });

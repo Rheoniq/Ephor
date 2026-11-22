@@ -3,14 +3,17 @@
 // Reads a session's plan and last shell command from its transcript. The
 // file is read backwards in chunks until the latest update_plan call that
 // carries items and the latest Bash or PowerShell command are found, or the
-// scan limit or the start of the file is reached. Results are cached per file
-// by size and mtime; a grown file is read forward from where the last read
-// stopped. Plan text and commands are untrusted and passed on as data only.
+// scan limit or the start of the file is reached. The plan calls after that
+// items call, and the wrap_up calls among them (each checks the whole plan
+// off), are then replayed in file order. Results are cached per file by size
+// and mtime; a grown file is read forward from where the last read stopped.
+// Plan text and commands are untrusted and passed on as data only.
 
 const fs = require('node:fs');
-const { applyUpdate, replayPlan } = require('./plan');
+const { applyUpdate, replayPlan, WRAP_UP } = require('./plan');
 
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan';
+const WRAP_UP_TOOL = 'mcp__ccd_turn__wrap_up';
 const COMMAND_TOOLS = new Set(['Bash', 'PowerShell']);
 const MAX_COMMAND = 160;
 const ELLIPSIS = '…';
@@ -53,9 +56,12 @@ function commandOf(block) {
   return formatCommand(input.command);
 }
 
+// The plan input of a block: an update_plan call's input, the WRAP_UP marker
+// for a wrap_up call (it checks the whole plan off), else undefined.
 function planInputOf(block) {
-  if (block.name !== PLAN_TOOL) return undefined;
-  return block.input;
+  if (block.name === PLAN_TOOL) return block.input;
+  if (block.name === WRAP_UP_TOOL) return WRAP_UP;
+  return undefined;
 }
 
 function readRange(fd, start, length) {

@@ -340,3 +340,100 @@ test('an empty file returns nulls', () => {
   fs.writeFileSync(file, '');
   assert.deepEqual(createPlanReader().read(file), { items: null, lastCommand: null });
 });
+
+// wrap_up (mcp__ccd_turn__wrap_up) checks the whole plan off at the end of a turn.
+
+const WRAP = 'mcp__ccd_turn__wrap_up';
+const wrapUp = () => toolLine(WRAP, { recap: 'All done. Nothing committed.' });
+// One assistant event with several tool_use blocks, in this order.
+function multi(blocks, extra = {}) {
+  n += 1;
+  return JSON.stringify({
+    type: 'assistant',
+    ...extra,
+    message: { role: 'assistant', content: blocks.map(([name, input], k) => ({ type: 'tool_use', id: `toolu_${n}_${k}`, name, input })) },
+  });
+}
+
+test('wrap_up after an items call completes every item', () => {
+  write([plan({ items: items(4, 1) }), bash('npm test'), wrapUp()]);
+  const r = createPlanReader({ chunkBytes: 200 }).read(file);
+  assert.deepEqual(statuses(r), ['completed', 'completed', 'completed', 'completed']);
+  assert.equal(r.lastCommand, 'npm test');
+});
+
+test('wrap_up then a new items call gives the new plan', () => {
+  write([plan({ items: items(4, 2) }), wrapUp(), filler(1), plan({ items: items(2) })]);
+  const r = createPlanReader({ chunkBytes: 200 }).read(file);
+  assert.deepEqual(statuses(r), ['in_progress', 'pending']);
+});
+
+test('wrap_up with no plan gives no plan', () => {
+  write([bash('ls'), wrapUp(), filler(1)]);
+  const r = createPlanReader({ chunkBytes: 200 }).read(file);
+  assert.equal(r.items, null);
+  assert.equal(r.lastCommand, 'ls');
+});
+
+test('updates after the last wrap_up are replayed in file order', () => {
+  write([plan({ items: items(3) }), wrapUp(), plan({ start: 2 })]);
+  assert.deepEqual(statuses(createPlanReader({ chunkBytes: 200 }).read(file)), ['completed', 'in_progress', 'completed']);
+  write([plan({ items: items(3) }), plan({ advance: true }), wrapUp(), plan({ advance: true })]);
+  assert.deepEqual(statuses(createPlanReader({ chunkBytes: 200 }).read(file)), ['completed', 'completed', 'completed']);
+});
+
+test('wrap_up and update_plan in one event keep their block order', () => {
+  write([plan({ items: items(3) }), multi([[WRAP, {}], [PLAN, { items: items(2) }]])]);
+  assert.deepEqual(statuses(createPlanReader({ chunkBytes: 200 }).read(file)), ['in_progress', 'pending']);
+  write([multi([[PLAN, { items: items(2) }], [WRAP, {}]])]);
+  assert.deepEqual(statuses(createPlanReader({ chunkBytes: 200 }).read(file)), ['completed', 'completed']);
+});
+
+test('a wrap_up inside a sidechain event is ignored', () => {
+  const sideWrap = () => multi([[WRAP, { recap: 'sub' }]], { isSidechain: true });
+  write([plan({ items: items(3) }), sideWrap()]);
+  const reader = createPlanReader({ chunkBytes: 200 });
+  assert.deepEqual(statuses(reader.read(file)), ['in_progress', 'pending', 'pending']);
+  append([sideWrap()]);
+  assert.deepEqual(statuses(reader.read(file)), ['in_progress', 'pending', 'pending']);
+});
+
+test('wrap_up is found across chunk boundaries', () => {
+  const lines = [plan({ items: items(3) })];
+  for (let i = 0; i < 15; i++) lines.push(filler(i));
+  lines.push(plan({ advance: true }));
+  for (let i = 0; i < 15; i++) lines.push(filler(100 + i));
+  lines.push(wrapUp());
+  for (let i = 0; i < 15; i++) lines.push(filler(200 + i));
+  write(lines);
+  for (const chunkBytes of [7, 64, 200, 1000]) {
+    const r = createPlanReader({ chunkBytes }).read(file);
+    assert.deepEqual(statuses(r), ['completed', 'completed', 'completed'], `chunkBytes ${chunkBytes}`);
+  }
+});
+
+test('a cached read picks up a wrap_up appended later, and a plan after it', () => {
+  const lines = [plan({ items: items(3, 1) })];
+  for (let i = 0; i < 30; i++) lines.push(filler(i));
+  write(lines);
+  const reader = createPlanReader({ chunkBytes: 200 });
+  assert.deepEqual(statuses(reader.read(file)), ['completed', 'in_progress', 'pending']);
+
+  append([wrapUp()]);
+  const orig = fs.readSync;
+  let bytes = 0;
+  fs.readSync = function (...args) { const r = orig.apply(this, args); bytes += r; return r; };
+  let r;
+  try {
+    r = reader.read(file);
+  } finally {
+    fs.readSync = orig;
+  }
+  assert.deepEqual(statuses(r), ['completed', 'completed', 'completed']);
+  assert.ok(bytes < 1000, `re-read ${bytes} bytes`);
+
+  append([plan({ items: items(2) })]);
+  assert.deepEqual(statuses(reader.read(file)), ['in_progress', 'pending']);
+  append([wrapUp(), plan({ start: 1 })]);
+  assert.deepEqual(statuses(reader.read(file)), ['in_progress', 'completed']);
+});

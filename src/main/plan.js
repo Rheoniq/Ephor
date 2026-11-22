@@ -9,6 +9,11 @@ const MAX_CONTENT = 200;
 const ELLIPSIS = '…';
 const STATUSES = new Set(['pending', 'in_progress', 'completed']);
 
+// The input the reader passes for a wrap_up call (the end-of-turn tool that
+// checks the plan off). Matched by identity, so no transcript input, which
+// is parsed JSON, can stand in for it.
+const WRAP_UP = Object.freeze({ wrapUp: true });
+
 function isObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -38,6 +43,10 @@ function validIndex(n, len) {
 
 function applyUpdate(items, input) {
   if (!isObject(input)) return items;
+  if (input === WRAP_UP) {
+    // Every item is done; before any plan there is nothing to complete.
+    return Array.isArray(items) ? items.map((i) => ({ ...i, status: 'completed' })) : items;
+  }
   if (Array.isArray(input.items)) return normalizeItems(input.items);
   if (!Array.isArray(items)) return items;
 
@@ -92,4 +101,4 @@ function summarize(items) {
   return { total, current: idx + 1, phase: items[idx].content, done, state };
 }
 
-module.exports = { normalizeItems, applyUpdate, replayPlan, summarize, MAX_ITEMS, MAX_CONTENT };
+module.exports = { normalizeItems, applyUpdate, replayPlan, summarize, WRAP_UP, MAX_ITEMS, MAX_CONTENT };
