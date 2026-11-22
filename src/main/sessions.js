@@ -20,7 +20,10 @@ function pidIsAlive(pid) {
   }
 }
 
-function readSessions(dir, isAlive) {
+// isStale(session), optional, marks an entry that a host lookup proved stale
+// (open-target.js): it is left out before the duplicates are merged, so a
+// stale newest file never hides a live sibling. A throwing check keeps it.
+function readSessions(dir, isAlive, isStale) {
   let entries;
   try {
     entries = fs.readdirSync(dir);
@@ -45,10 +48,9 @@ function readSessions(dir, isAlive) {
     // sessionId ends up in a transcript path and in IPC: accept only a UUID.
     if (typeof data.sessionId !== 'string' || !SESSION_ID_RE.test(data.sessionId)) continue;
     // A pid from another pid domain (WSL, another machine) means nothing
-    // here: an entry that names a domain other than win32 is dropped.
-    if (data.pidDomain !== undefined && !(typeof data.pidDomain === 'string' && data.pidDomain.startsWith('win32'))) {
-      continue;
-    }
+    // here: an entry whose pidDomain is a string that does not start with
+    // win32 is dropped. A null, missing or non-string pidDomain is kept.
+    if (typeof data.pidDomain === 'string' && !data.pidDomain.startsWith('win32')) continue;
     if (!isAlive(data.pid)) continue;
 
     const entrypoint = typeof data.entrypoint === 'string' ? data.entrypoint : '';
@@ -71,7 +73,15 @@ function readSessions(dir, isAlive) {
       entrypoint,
     });
   }
-  return newestPerSession(sessions);
+  return newestPerSession(typeof isStale === 'function' ? sessions.filter((s) => !staleBy(isStale, s)) : sessions);
+}
+
+function staleBy(isStale, session) {
+  try {
+    return isStale(session) === true;
+  } catch {
+    return false;
+  }
 }
 
 function updatedAtOf(session) {

@@ -306,8 +306,10 @@ test('host lookups: a name found on a retry is kept', async () => {
 function setupLookup(results) {
   let t = 1000;
   const calls = [];
+  const logs = [];
   let refreshes = 0;
   const lookups = createHostLookups({
+    log: (line) => logs.push(line),
     lookup: async (pid, startKey, options) => {
       calls.push({ pid, startKey, options });
       const r = results[pid];
@@ -318,8 +320,66 @@ function setupLookup(results) {
       refreshes += 1;
     },
   });
-  return { lookups, calls, refreshes: () => refreshes, advance: (ms) => { t += ms; } };
+  return { lookups, calls, logs, refreshes: () => refreshes, advance: (ms) => { t += ms; } };
 }
+
+const SID = 'abcdef12-3456-4789-8abc-def012345678';
+
+test('host lookups: a stale verdict logs one line with the short id, pid and reason only', async () => {
+  const h = setupLookup({
+    10: { host: null, stale: true, reason: 'pid-missing' },
+    11: { host: null, stale: true, reason: 'start-mismatch' },
+    12: { host: null, stale: true },
+  });
+  h.lookups.hostFor({ ...ts(SID, 10), cwd: 'C:\\secret\\proj', name: 'Secret name' });
+  h.lookups.hostFor(ts('s11', 11));
+  h.lookups.hostFor(ts('s12', 12));
+  await flush();
+  assert.equal(h.logs.length, 3);
+  assert.equal(h.logs[0], 'stale session abcdef12 pid 10: pid-missing');
+  assert.equal(h.logs[1], 'stale session s11 pid 11: start-mismatch');
+  assert.equal(h.logs[2], 'stale session s12 pid 12: unspecified');
+  // Asked again later: no new line, the mark holds.
+  h.advance(24 * 60 * 60 * 1000);
+  h.lookups.hostFor(ts(SID, 10));
+  await flush();
+  assert.equal(h.logs.length, 3);
+});
+
+test('host lookups: no log line without a stale verdict, and a throwing log is ignored', async () => {
+  const h = setupLookup({ 10: { host: null, stale: false }, 11: { host: { name: 'Zed', ownerPid: 1 }, stale: false } });
+  h.lookups.hostFor(ts('s10', 10));
+  h.lookups.hostFor(ts('s11', 11));
+  await flush();
+  assert.deepEqual(h.logs, []);
+  const throwing = createHostLookups({
+    lookup: async () => ({ host: null, stale: true, reason: 'pid-missing' }),
+    log: () => {
+      throw new Error('x');
+    },
+  });
+  throwing.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(throwing.isStale(ts('s1', 10)), true);
+});
+
+test('host lookups: a stale mark survives a lookup for a live sibling with the same session id', async () => {
+  const h = setupLookup({ 10: { host: null, stale: true, reason: 'pid-missing' }, 12: { host: { name: 'Zed', ownerPid: 2 }, stale: false } });
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(h.lookups.isStale(ts('s1', 10)), true);
+  // The live sibling (another registry file, same session id) is looked up.
+  h.lookups.hostFor(ts('s1', 12));
+  await flush();
+  assert.equal(h.lookups.hostFor(ts('s1', 12)), 'Zed');
+  assert.equal(h.lookups.isStale(ts('s1', 10)), true);
+  assert.equal(h.lookups.isStale(ts('s1', 12)), false);
+  // The stale entry is never asked again.
+  assert.equal(h.calls.filter((c) => c.pid === 10).length, 1);
+  // prune by session id still forgets both.
+  h.lookups.prune([]);
+  assert.equal(h.lookups.isStale(ts('s1', 10)), false);
+});
 
 test('host lookups: a stale verdict marks the session stale, asks for a refresh and stops lookups', async () => {
   const h = setupLookup({ 10: { host: null, stale: true } });

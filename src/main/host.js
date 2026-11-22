@@ -37,8 +37,8 @@ const FRIENDLY = new Map([
   ['pycharm64.exe', 'JetBrains'],
 ]);
 
-// The processes a registry pid may belong to. Any other name means the pid was
-// reused by an unrelated process: no host, so no window is ever focused.
+// The processes a registry pid may belong to. Any other name gives no host, so
+// no window is ever focused; it is not a stale verdict either (judgeEntry).
 const SESSION_PROCESSES = new Set(['claude.exe', 'node.exe']);
 // Never the host: the session process itself, a parent claude or node.
 const NOT_HOSTS = new Set(['claude.exe', 'node.exe']);
@@ -135,24 +135,35 @@ function sameStart(a, b) {
 }
 
 // What one process table says about a registry entry: 'live' (the pid is a
-// claude or node process that started at `start`, within 1 ms), 'stale'
-// (definitely not: the pid is missing, belongs to another program, or started
-// at another time) or 'unknown' (the pid's start time is not known).
+// claude or node process that started at `start`, within 1 ms), a stale
+// reason (definitely not: 'pid-missing' when the pid is not in the table,
+// 'start-mismatch' when its claude or node process started at another time)
+// or 'unknown' (the pid belongs to another program, or its start time is not
+// known: no host, but the session stays).
 function judgeEntry(index, pid, start) {
   const self = index.get(pid);
-  if (!self || !SESSION_PROCESSES.has(lower(self.name))) return 'stale';
+  if (!self) return 'pid-missing';
+  if (!SESSION_PROCESSES.has(lower(self.name))) return 'unknown';
   if (self.start === 0n) return 'unknown';
-  return sameStart(self.start, start) ? 'live' : 'stale';
+  return sameStart(self.start, start) ? 'live' : 'start-mismatch';
 }
 
 const NO_ANSWER = Object.freeze({ host: null, stale: false });
-const STALE = Object.freeze({ host: null, stale: true });
+const STALE = Object.freeze({
+  'pid-missing': Object.freeze({ host: null, stale: true, reason: 'pid-missing' }),
+  'start-mismatch': Object.freeze({ host: null, stale: true, reason: 'start-mismatch' }),
+});
+// Tables read for one lookup at most: the first, one read since the lookup
+// began, and one more to confirm a start mismatch seen on that one.
+const MAX_TABLES = 3;
 
 // lookup(pid, startKey, { revalidate }) -> { host: { name, ownerPid } | null,
-// stale: boolean }. stale is true only when a loaded process table proves that
-// the registry entry no longer describes a live session (judgeEntry); a failed
-// table load, a failed window check, an unknown start time, bad input or a
-// live session without a host give { host: null, stale: false }.
+// stale: boolean, reason? }. stale is true only when a loaded process table
+// proves that the registry entry no longer describes a live session
+// (judgeEntry); reason is then 'pid-missing' or 'start-mismatch'. A failed
+// table load, a failed window check, a pid held by another program, an
+// unknown start time, bad input or a live session without a host give
+// { host: null, stale: false }.
 // resolve(pid, startKey, { revalidate }) -> { name, ownerPid } | null is
 // lookup's host alone (the older API).
 // startKey is the registry's procStart (FILETIME ticks); without it there is no
@@ -163,21 +174,27 @@ const STALE = Object.freeze({ host: null, stale: true });
 // pid's start matches startKey and, for a cached owner, that it is still in the
 // chain. A stale verdict from a table read before the lookup began is checked
 // once more on a table read since, so a session that started after the last
-// read is never called stale. hasVisibleWindow(pids) answers for all candidates
+// read is never called stale; a start mismatch is confirmed on one more table
+// read after it was seen (concurrent lookups share that read). A failed read
+// on the way gives no verdict. hasVisibleWindow(pids) answers for all candidates
 // in one call (windowsOf). "No owner" is remembered for ttlMs. Never rejects.
 function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs = DEFAULT_TTL_MS } = {}) {
-  let table = null; // { at, promise -> Map | null (a failed load) }
+  let table = null; // { at, gen, promise -> Map | null (a failed load) }
+  let loads = 0;
   const cache = new Map(); // key -> { ownerPid, exe, name } | { none: true, until }
   const inflight = new Map();
 
-  // The shared table, read again when it is older than ttlMs or was read
-  // before notBefore.
-  function snapshot(notBefore = -Infinity) {
+  // The shared table, read again when it is older than ttlMs, was read before
+  // notBefore, or is not newer than the read numbered afterGen.
+  function snapshot(notBefore = -Infinity, afterGen = 0) {
     const t = now();
-    const usable = table && t >= table.at && t - table.at < ttlMs && table.at >= notBefore;
+    const usable =
+      table && t >= table.at && t - table.at < ttlMs && table.at >= notBefore && table.gen > afterGen;
     if (!usable) {
+      loads += 1;
       table = {
         at: t,
+        gen: loads,
         promise: Promise.resolve()
           .then(() => loadTable())
           .then((rows) => {
@@ -203,18 +220,29 @@ function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs
     let index = await snap.promise;
     if (!index) return NO_ANSWER;
     let verdict = judgeEntry(index, pid, start);
-    if (verdict === 'stale' && snap.at < began) {
-      // That table may predate the process: only a table read since counts.
-      snap = snapshot(began);
+    let prev = null;
+    for (let read = 1; STALE[verdict]; read += 1) {
+      // A table read before the lookup began may predate the process: only a
+      // table read since counts. A start mismatch must show on two tables in
+      // a row, the second read after the first verdict.
+      const fresh = snap.at >= began;
+      const confirmed = verdict === 'pid-missing' ? fresh : fresh && prev === 'start-mismatch';
+      if (confirmed) {
+        cache.delete(key);
+        return STALE[verdict];
+      }
+      if (read >= MAX_TABLES) break;
+      prev = verdict;
+      snap = snapshot(began, snap.gen);
       index = await snap.promise;
       if (!index) return NO_ANSWER;
       verdict = judgeEntry(index, pid, start);
     }
     if (verdict !== 'live') {
-      // The registry entry does not describe the live process (anymore), or
-      // that cannot be told.
+      // Cannot be told: another program on that pid, an unknown start time,
+      // or a stale verdict that was not confirmed.
       cache.delete(key);
-      return verdict === 'stale' ? STALE : NO_ANSWER;
+      return NO_ANSWER;
     }
     const candidates = hostCandidates(walkAncestors(index, pid));
     if (candidates.length === 0) {

@@ -170,6 +170,7 @@ const hostLookups = DEMO
   ? null
   : createHostLookups({
       lookup: (pid, startKey, options) => hostResolver.lookup(pid, startKey, options),
+      log: (line) => console.log(`[huddle] ${line}`),
       onResolved: () => {
         if (!quitting) scheduleRefresh();
       },
@@ -237,13 +238,16 @@ function buildDemoSnapshot() {
 // Returns all kept sessions (before visibility filtering) and the snapshot.
 function buildSnapshot() {
   if (DEMO) return buildDemoSnapshot();
-  // Sessions missing from one read stay for a short grace period.
-  const read = grace.apply(readSessions(SESSIONS_DIR, pidIsAlive));
+  // Sessions missing from one read stay for a short grace period. Stale
+  // entries are left out before duplicates are merged, so a stale newest file
+  // never hides a live sibling with the same session id.
+  const read = grace.apply(readSessions(SESSIONS_DIR, pidIsAlive, (s) => hostLookups.isStale(s)));
   // Pruned with every session read, so a stale mark holds while its file stays.
   hostLookups.prune(read.map((s) => s.sessionId));
   // A terminal session whose host lookup proved its registry entry stale (a
-  // file left behind whose pid now belongs to another process) is dropped,
-  // until its pid or procStart changes.
+  // file left behind whose pid is gone or now belongs to a claude or node
+  // process that started at another time) is dropped, until its pid or
+  // procStart changes; the grace copy of a just-marked entry goes here.
   const kept = read.filter((s) => !hostLookups.isStale(s));
   const keptIds = kept.map((s) => s.sessionId);
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));

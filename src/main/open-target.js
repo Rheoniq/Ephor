@@ -58,17 +58,41 @@ function openSucceeded(result) {
 // retryDelays[0] (60 s), then retryDelays[1] (5 min), then not again. A stale
 // verdict (the registry entry no longer describes a live session, see
 // host.js) marks the session stale for isStale(), calls onResolved() so main
-// drops it on the next refresh, and stops the lookups. Entries are per
-// session id and start over, backoff and stale mark included, when the
-// session's pid or procStart changes. Never throws.
+// drops it on the next refresh, and stops the lookups; log(line) gets one
+// line per verdict: the session id's first 8 characters, the pid and the
+// reason ('pid-missing' or 'start-mismatch'), never a name or a path.
+// Entries are per session id and pid plus procStart: a new pid or procStart
+// starts over with a fresh backoff and no stale mark. Starting one drops the
+// other entries of that session id, except stale marks, so a stale registry
+// file keeps its mark while a live sibling with the same session id is
+// looked up. Never throws.
+const STALE_REASONS = new Set(['pid-missing', 'start-mismatch']);
+
 function createHostLookups({
   resolve,
   lookup,
   now = Date.now,
   onResolved,
+  log,
   retryDelays = RETRY_DELAYS_MS,
 } = {}) {
-  const entries = new Map(); // sessionId -> { ident, state, name, until, misses }
+  // sessionId -> Map(ident -> { ident, state, name, until, misses })
+  const entries = new Map();
+
+  function entryOf(sessionId, ident) {
+    const byIdent = entries.get(sessionId);
+    return byIdent ? byIdent.get(ident) : undefined;
+  }
+
+  function logStale(session, reason) {
+    if (typeof log !== 'function') return;
+    try {
+      const why = STALE_REASONS.has(reason) ? reason : 'unspecified';
+      log(`stale session ${session.sessionId.slice(0, 8)} pid ${session.pid}: ${why}`);
+    } catch {
+      /* ignore */
+    }
+  }
 
   function ask(session) {
     if (typeof lookup === 'function') return lookup(session.pid, session.procStart, { revalidate: false });
@@ -89,7 +113,13 @@ function createHostLookups({
 
   function start(session, ident, misses) {
     const entry = { ident, state: 'pending', name: null, until: 0, misses };
-    entries.set(session.sessionId, entry);
+    let byIdent = entries.get(session.sessionId);
+    if (!byIdent) {
+      byIdent = new Map();
+      entries.set(session.sessionId, byIdent);
+    }
+    for (const [other, e] of [...byIdent]) if (other !== ident && e.state !== 'stale') byIdent.delete(other);
+    byIdent.set(ident, entry);
     let p;
     try {
       p = Promise.resolve(ask(session));
@@ -98,9 +128,10 @@ function createHostLookups({
     }
     p.catch(() => null).then((res) => {
       // Dropped when the session left or was started over meanwhile.
-      if (entries.get(session.sessionId) !== entry) return;
+      if (entryOf(session.sessionId, ident) !== entry) return;
       if (res && res.stale === true) {
         entry.state = 'stale';
+        logStale(session, res.reason);
         notify(session.sessionId);
         return;
       }
@@ -132,8 +163,8 @@ function createHostLookups({
     try {
       const ident = identOf(session);
       if (ident === null) return null;
-      const entry = entries.get(session.sessionId);
-      if (!entry || entry.ident !== ident) {
+      const entry = entryOf(session.sessionId, ident);
+      if (!entry) {
         start(session, ident, 0);
         return null;
       }
@@ -153,8 +184,8 @@ function createHostLookups({
     try {
       const ident = identOf(session);
       if (ident === null) return false;
-      const entry = entries.get(session.sessionId);
-      return !!entry && entry.ident === ident && entry.state === 'stale';
+      const entry = entryOf(session.sessionId, ident);
+      return !!entry && entry.state === 'stale';
     } catch {
       return false;
     }

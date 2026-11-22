@@ -210,14 +210,41 @@ test('a duplicate whose pid is dead does not hide the live one', () => {
   assert.deepEqual(readSessions(dir, (pid) => pid === 1002).map((s) => s.pid), [1002]);
 });
 
-test('drops entries from another pid domain (WSL or another machine)', () => {
+test('drops entries whose pidDomain string names another domain (WSL or another machine)', () => {
   writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, pidDomain: 'win32:pc' }));
   writeJson('1002.json', base({ pid: 1002, sessionId: ID_B, pidDomain: 'linux:wsl' }));
   writeJson('1003.json', base({ pid: 1003, sessionId: ID_C }));
   writeJson('1004.json', base({ pid: 1004, sessionId: ID_KEY, pidDomain: 'win32' }));
-  writeJson('1005.json', base({ pid: 1005, sessionId: ID_TXT, pidDomain: 42 }));
-  writeJson('1006.json', base({ pid: 1006, sessionId: ID_OK, pidDomain: null }));
   writeJson('1007.json', base({ pid: 1007, sessionId: ID_LIVE, pidDomain: 'darwin:mac' }));
+  writeJson('1008.json', base({ pid: 1008, sessionId: ID_DEAD, pidDomain: '' }));
   const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
   assert.deepEqual(ids.sort(), [ID_A, ID_C, ID_KEY].sort());
+});
+
+test('keeps entries whose pidDomain is null, missing or not a string', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, pidDomain: null }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_B }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_C, pidDomain: 42 }));
+  writeJson('1004.json', base({ pid: 1004, sessionId: ID_KEY, pidDomain: { os: 'linux' } }));
+  writeJson('1005.json', base({ pid: 1005, sessionId: ID_TXT, pidDomain: false }));
+  const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
+  assert.deepEqual(ids.sort(), [ID_A, ID_B, ID_C, ID_KEY, ID_TXT].sort());
+});
+
+test('a stale newest duplicate does not hide its live sibling', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, updatedAt: 9, entrypoint: 'cli', procStart: '10' }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_A, updatedAt: 1, entrypoint: 'cli', procStart: '20' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_B, updatedAt: 1 }));
+  const isStale = (s) => s.pid === 1001;
+  assert.deepEqual(readSessions(dir, allAlive, isStale).map((s) => s.pid).sort(), [1002, 1003]);
+  // Without the stale check the newest entry wins as before.
+  assert.deepEqual(readSessions(dir, allAlive).map((s) => s.pid).sort(), [1001, 1003]);
+});
+
+test('a throwing stale check keeps the entry', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A }));
+  const isStale = () => {
+    throw new Error('x');
+  };
+  assert.deepEqual(readSessions(dir, allAlive, isStale).map((s) => s.pid), [1001]);
 });

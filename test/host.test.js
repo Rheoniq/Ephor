@@ -518,7 +518,8 @@ test('an owner listed with no windows does not count', async () => {
 
 const LIVE_ZED = { host: { name: 'Zed', ownerPid: 2000 }, stale: false };
 const NO_ANSWER = { host: null, stale: false };
-const STALE = { host: null, stale: true };
+const STALE = { host: null, stale: true, reason: 'pid-missing' };
+const MISMATCH = { host: null, stale: true, reason: 'start-mismatch' };
 
 test('lookup gives the host and stale false for a live session', async () => {
   const { resolver } = fakeResolver();
@@ -537,19 +538,74 @@ test('lookup reports stale when the pid is missing from a loaded table', async (
 
 test('lookup reports stale when the start time does not match within 1 ms', async () => {
   const { resolver } = fakeResolver();
-  assert.deepEqual(await resolver.lookup(4000, '410001'), STALE);
-  assert.deepEqual(await resolver.lookup(4000, '389999'), STALE);
+  assert.deepEqual(await resolver.lookup(4000, '410001'), MISMATCH);
+  assert.deepEqual(await resolver.lookup(4000, '389999'), MISMATCH);
   // Within 1 ms is the same process.
   assert.deepEqual(await resolver.lookup(4000, '410000'), LIVE_ZED);
 });
 
-test('lookup reports stale when the pid is not a claude or node process', async () => {
-  const { resolver } = fakeResolver({ windows: [6000] });
-  assert.deepEqual(await resolver.lookup(6100, '610'), STALE);
+test('a start mismatch is confirmed on a table loaded after the first verdict', async () => {
+  const { resolver, state } = fakeResolver();
+  assert.deepEqual(await resolver.lookup(4000, '410001'), MISMATCH);
+  // The first table was read for this lookup, and still one more is read.
+  assert.equal(state.loads, 2);
+});
+
+test('a start mismatch that is not confirmed on the fresh table is not stale', async () => {
+  let table = TABLE.map((r) => (r.pid === 4000 ? { ...r, start: 999999 } : r));
+  const { resolver, state } = fakeResolver({
+    table: () => {
+      const t = table;
+      table = TABLE;
+      return t;
+    },
+  });
+  // A glitched first read: the fresh table shows the right start.
+  assert.deepEqual(await resolver.lookup(4000, CLAUDE), LIVE_ZED);
+  assert.equal(state.loads, 2);
+});
+
+test('a mismatch first seen on the fresh read after an old table is confirmed once more', async () => {
+  let table = TABLE.filter((r) => r.pid !== 5000);
+  const { resolver, state } = fakeResolver({ table: () => table });
+  await resolver.resolve(4000, CLAUDE);
+  // pid 5000 appears with another start after the first read.
+  table = TABLE;
+  state.t += 1000;
+  assert.deepEqual(await resolver.lookup(5000, '510001'), MISMATCH);
+  assert.equal(state.loads, 3);
+});
+
+test('concurrent start mismatches share one confirming load', async () => {
+  const { resolver, state } = fakeResolver();
+  const results = await Promise.all([resolver.lookup(4000, '410001'), resolver.lookup(5000, '510001')]);
+  assert.deepEqual(results, [MISMATCH, MISMATCH]);
+  assert.equal(state.loads, 2);
+});
+
+test('a failed confirming load gives no verdict', async () => {
+  let n = 0;
+  const { resolver } = fakeResolver({
+    table: () => {
+      n += 1;
+      if (n > 1) throw new Error('wmi down');
+      return TABLE;
+    },
+  });
+  assert.deepEqual(await resolver.lookup(4000, '410001'), NO_ANSWER);
+});
+
+test('lookup is not stale when the pid is not a claude or node process (unknown)', async () => {
+  const { resolver, state } = fakeResolver({ windows: [6000] });
+  assert.deepEqual(await resolver.lookup(6100, '610'), NO_ANSWER);
   // Whatever its start time says.
   const unknown = TABLE.map((r) => (r.pid === 6100 ? { ...r, start: 0 } : r));
   const other = fakeResolver({ table: unknown, windows: [6000] });
-  assert.deepEqual(await other.resolver.lookup(6100, '610'), STALE);
+  assert.deepEqual(await other.resolver.lookup(6100, '610'), NO_ANSWER);
+  assert.deepEqual(await other.resolver.lookup(6100, '999'), NO_ANSWER);
+  // A mismatched start on another program is unknown too.
+  assert.deepEqual(await resolver.lookup(6100, '999999'), NO_ANSWER);
+  assert.equal(state.checks.length, 0);
 });
 
 test('lookup is never stale on a failed load, a failed window check or an unknown start', async () => {
