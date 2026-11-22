@@ -410,9 +410,8 @@ button:focus-visible {
 
 .after-prompt .progress { margin-top: 0; }
 
-/* Expanded view: the plan checklist and the last command, aligned with the
-   name. Done steps are muted, the active step is bold, steps still to do
-   are plain. Marks are 3:1 or more on the card in both themes. */
+/* Expanded view: the plan checklist, aligned with the name. Done steps are
+   muted, the active step is bold, steps still to do are plain. Marks are 3:1 or more on the card in both themes. */
 .details {
   margin: -2px 14px 12px 59px;
 }
@@ -481,23 +480,6 @@ button:focus-visible {
   stroke-linecap: round;
   stroke-dasharray: 16 100;
 }
-
-.last-command {
-  margin: 8px 0 0;
-  font: 11.5px/1.4 var(--mono);
-  color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.plan + .last-command {
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.last-command:first-child { margin-top: 0; }
-
-.last-label { font-weight: 600; }
 
 .no-plan {
   margin: 0;

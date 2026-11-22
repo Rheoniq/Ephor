@@ -4,7 +4,7 @@ Huddle is a small always-on-top panel in the top-right corner of the screen. It 
 
 This branch adds terminal sessions: they are listed with a small badge naming their host program, and their arrow reads "Open in <host>" (see [Terminal sessions](#terminal-sessions)).
 
-Version 0.3.0 adds: a progress bar and a plan checklist per session, the last command a session requested, a distinct color for each visible session, and clearer question and permission cards.
+Version 0.3.0 adds: a progress bar and a plan checklist per session, a distinct color for each visible session, and clearer question and permission cards.
 
 Version 0.2.0 added: header buttons to hide and quit, a hotkey, a collapsed pill you can drag, quiet mode, toasts, a pixel creature avatar per session, and answering Claude's option prompts and shell command approvals from the panel.
 
@@ -34,9 +34,8 @@ What feeds it:
 
 Click a session to expand it:
 
-- The whole plan as a checklist: a checked box for done steps, a spinner for the active step, an empty box for steps still to do. At most 30 steps are shown.
-- Below it, "Last command requested:" and the last shell command the session asked to run, on one line (cut at 160 characters). It is the last one requested, not proof that it ran: a denied command, or the one a card is asking about, shows here too. Without a plan only that line shows, or "No plan yet".
-- Control and invisible characters in plan steps and in the command (bidi marks, zero-width characters, escape codes, variation selectors, blank-looking characters) show as `?`, so they cannot change what the line seems to say.
+- The whole plan as a checklist: a checked box for done steps, a spinner for the active step, an empty box for steps still to do. At most 30 steps are shown. Without a plan it reads "No plan yet".
+- Control and invisible characters in plan steps (bidi marks, zero-width characters, escape codes, variation selectors, blank-looking characters) show as `?`, so they cannot change what the line seems to say.
 
 Each row has the arrow (open in Claude Desktop, or "Open in <host>" for a terminal session) and the x (dismiss) stacked on its right edge.
 
@@ -46,7 +45,7 @@ Claude Code sessions running in Zed, VS Code, Cursor, JetBrains or any terminal 
 
 - **Host badge:** a small badge after the name names the program that hosts the session (Zed, VS Code, Cursor, JetBrains, Terminal, or the program's own name). Huddle finds it by walking up the process tree from the session's process to the first program with a visible window. The lookup runs in the background; a host that cannot be found is asked again after 60 seconds, then after 5 minutes, and then not again for that session.
 - **Arrow:** "Open in <host>" brings that program's window to the front, restoring it when minimized. It picks the window whose title shows the session's folder name (see [Limits](#limits)). When the host is not known yet, the arrow looks it up on the click.
-- **No progress bar:** the plan comes from Claude Desktop's plan tool, which terminal sessions do not have. A terminal session shows its status label and, expanded, the last command it requested.
+- **No progress bar:** the plan comes from Claude Desktop's plan tool, which terminal sessions do not have. A terminal session shows its status label.
 - **Prompt cards** are off for terminal sessions by default (see [Answering from the panel](#answering-from-the-panel)).
 - A registry file left behind by a crashed session is dropped as soon as the host lookup proves it stale: its process id is missing from the process table, or a Claude process on that id started at another time (seen on two table reads in a row). Each drop is logged with the first 8 characters of the session id, the process id and the reason. A process id held by another program is not proof: that session stays, without a badge. When two registry files name the same session, the one updated last counts among those not proven stale.
 
@@ -152,7 +151,7 @@ Huddle only reads local files; it never writes to them.
 
 - Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped, and so are entries whose `pidDomain` is text that does not start with `win32` (WSL, another machine). An entry whose `pidDomain` is missing, `null` or not text is kept. When two files name the same session, the one with the newest `updatedAt` among those not proven stale counts.
 - Host of a terminal session: one process table (pid, parent pid, name and start time of each process, through PowerShell's `Get-CimInstance Win32_Process`, cached for 5 seconds) and the visible windows of the programs above the session's process. Both run off the refresh path.
-- Plan and last command: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan and the latest shell command are found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped. A file that was rewritten rather than appended to, or that grew by more than 8 MiB, is read again from the end.
+- Plan: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan is found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped. A file that was rewritten rather than appended to, or that grew by more than 8 MiB, is read again from the end.
 
 ## Run
 
@@ -221,7 +220,7 @@ Terminal sessions:
 - A click takes about one to two seconds, an estimate: a process-list read when the cache is older than 5 s, then a window list and the focus call; each PowerShell call compiles a small helper.
 - The badge and the arrow need Windows PowerShell 5.1 with `Add-Type` allowed. Under Constrained Language Mode or app control (AppLocker, WDAC) there is no badge and the arrow does nothing.
 - A session whose registry entry names a pid domain other than Windows (WSL, another machine) is not listed. A session whose host cannot be resolved (for example one running in WSL) gets no badge.
-- Terminal sessions get no progress bar: the plan comes from Desktop's plan tool. They show the status label and the last command.
+- Terminal sessions get no progress bar: the plan comes from Desktop's plan tool. They show the status label.
 - A shell that Windows 11 starts in the default terminal from Start may have no resolvable host (not verified).
 
 ### Verified live (hook gate, 2026-11-20)
@@ -258,4 +257,4 @@ Huddle reads `~/.claude` on your own machine. It makes no network requests beyon
 
 For terminal sessions Huddle reads the process table (pid, parent pid, name and start time of each process) and the window titles of the programs that may host a session. Both stay in memory only; they are never stored, logged or sent anywhere.
 
-A command card shows the command only while the prompt is open; it is never stored or logged. The "Last command requested" line (cut to 160 characters) and the plan steps are read from the local transcript and kept in Huddle's memory while the session is shown; they are never written to disk, logged or sent anywhere.
+A command card shows the command only while the prompt is open; it is never stored or logged. The plan steps are read from the local transcript and kept in Huddle's memory while the session is shown; they are never written to disk, logged or sent anywhere.

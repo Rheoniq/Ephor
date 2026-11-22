@@ -313,10 +313,7 @@
   }
 
   // The expanded view: every plan step (a checked box when done, a spinner
-  // for the active one, an empty box when still to do), then the last
-  // command requested (the call is written before it is allowed, so it may
-  // have been denied, or be the one a prompt card asks about). Without a plan
-  // only the command shows, or "No plan yet".
+  // for the active one, an empty box when still to do), or "No plan yet".
   function renderDetails(s, label, color) {
     const box = el('div', 'details');
     const rows = window.HuddleProgress.planRows(s.plan);
@@ -333,14 +330,7 @@
       }
       box.append(ol);
     }
-    const cmd = str(s.lastCommand);
-    if (cmd) {
-      const line = el('p', 'last-command');
-      line.append(el('span', 'last-label', 'Last command requested:'), ' ', el('span', 'last-cmd', cmd));
-      box.append(line);
-    } else if (rows.length === 0) {
-      box.append(el('p', 'no-plan', 'No plan yet'));
-    }
+    if (rows.length === 0) box.append(el('p', 'no-plan', 'No plan yet'));
     return box;
   }
 

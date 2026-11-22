@@ -35,13 +35,13 @@ function createSnapshotGate() {
 // keeps them out of the snapshot gate's comparison. `prompt` is set only
 // while a hook prompt for the session is held. `finished` is true only for a
 // session that just finished and was not looked at yet (finished.js).
-// `plan` (from snapshotPlan) and `lastCommand` are always present, null when
-// unknown, so the snapshot keeps one shape. `source` is 'terminal' or
+// `plan` (from snapshotPlan) is always present, null when unknown, so the
+// snapshot keeps one shape. `source` is 'terminal' or
 // 'desktop' (the default); `host` is the friendly name of the program that
 // hosts a terminal session (open-target.js), null while unknown and always
 // null for a desktop session. Both come after the older fields so a desktop
 // session's JSON only grows at the end.
-function toSnapshotSession(s, prompt, finished, plan, lastCommand, host) {
+function toSnapshotSession(s, prompt, finished, plan, host) {
   const source = s.source === 'terminal' ? 'terminal' : 'desktop';
   const out = {
     sessionId: s.sessionId,
@@ -50,7 +50,6 @@ function toSnapshotSession(s, prompt, finished, plan, lastCommand, host) {
     status: s.status,
     finished: finished === true,
     plan: plan || null,
-    lastCommand: typeof lastCommand === 'string' && lastCommand ? lastCommand : null,
     source,
     host: source === 'terminal' && typeof host === 'string' && host ? host : null,
   };
@@ -74,7 +73,7 @@ function snapshotPlan(items) {
   };
 }
 
-// Per-session plan and last command for the snapshot, through one shared
+// Per-session plan for the snapshot, through one shared
 // plan reader. `fileFor(session)` gives the transcript path. A read that
 // throws keeps the session's last good value (and reports through `onError`);
 // it never throws to the caller. prune(keptIds) drops sessions that left the
@@ -87,10 +86,7 @@ function createPlanSource(reader, fileFor, onError) {
     try {
       const file = fileFor(s);
       const r = reader.read(file);
-      const value = {
-        plan: snapshotPlan(r && r.items),
-        lastCommand: r && typeof r.lastCommand === 'string' && r.lastCommand ? r.lastCommand : null,
-      };
+      const value = { plan: snapshotPlan(r && r.items) };
       last.set(s.sessionId, { file, value });
       return value;
     } catch (err) {
@@ -101,7 +97,7 @@ function createPlanSource(reader, fileFor, onError) {
           /* ignore */
         }
       }
-      return prev ? prev.value : { plan: null, lastCommand: null };
+      return prev ? prev.value : { plan: null };
     }
   }
 

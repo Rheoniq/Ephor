@@ -120,7 +120,7 @@ let demoToastSent = false;
 const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
 // One plan reader for all sessions; planSource keeps each session's last good
-// plan and last command and forgets sessions that left the kept list.
+// plan and forgets sessions that left the kept list.
 const planSource = createPlanSource(
   createPlanReader(),
   (s) => transcriptPath(HOME, s.cwd, s.sessionId),
@@ -228,7 +228,6 @@ function buildDemoSnapshot() {
       promptFor(s.sessionId),
       finished.isFinished(s.sessionId),
       snapshotPlan(s.planItems),
-      s.lastCommand,
       s.host,
     ),
   );
@@ -262,13 +261,12 @@ function buildSnapshot() {
   endStaleHolds(visible);
   // Plans are read only for the shown sessions, so hidden ones cost nothing.
   const sessions = shownSessions(visible).map((s) => {
-    const { plan, lastCommand } = planSource.read(s);
+    const { plan } = planSource.read(s);
     return toSnapshotSession(
       s,
       promptFor(s.sessionId),
       finished.isFinished(s.sessionId),
       plan,
-      lastCommand,
       hostLookups.hostFor(s),
     );
   });

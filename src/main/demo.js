@@ -12,9 +12,9 @@ function demoPlan(contents, current) {
 
 // Fixed fake sessions for HUDDLE_DEMO=1, so the UI can be checked without
 // reading ~/.claude. `planItems` are update_plan items as the plan reader
-// returns them (no key means no plan); `lastCommand` is the last shell
-// command. Seven sessions, six of them shown: two run in a terminal
-// (`source: 'terminal'`, no hostSessionId), the rest in Claude Desktop.
+// returns them (no key means no plan). Seven sessions, six of them shown: two
+// run in a terminal (`source: 'terminal'`, no hostSessionId), the rest in
+// Claude Desktop.
 function demoSessions() {
   const now = Date.now();
   const base = { cwd: 'C:\\demo', pid: 0, updatedAt: now, source: 'desktop' };
@@ -30,7 +30,6 @@ function demoSessions() {
         ['Read the spec', 'Plan model', 'Transcript reader', 'Snapshot wiring', 'Animations', 'Docs', 'Review'],
         5,
       ),
-      lastCommand: 'npm test -- test/panel.test.js',
     },
     {
       ...base,
@@ -39,7 +38,6 @@ function demoSessions() {
       name: 'Run plan 4, Tasks 7 to 9 and report back',
       status: 'waiting',
       planItems: demoPlan(['Read the plan', 'Watching', 'Task 7', 'Task 8', 'Task 9'], 2),
-      lastCommand: 'npm test -- --watch=false',
     },
     {
       ...base,
@@ -51,7 +49,6 @@ function demoSessions() {
       status: 'idle',
       before: 'busy',
       planItems: demoPlan(['Read the export', 'Fix the totals', 'Add a test', 'Run the tests'], 5),
-      lastCommand: 'npm test',
     },
     {
       ...base,
@@ -60,7 +57,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-idle',
       name: 'Notification sounds configuration',
       status: 'idle',
-      lastCommand: 'git status',
     },
     {
       ...base,
@@ -69,7 +65,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-long',
       name: 'A very long session name with <b>x</b> markup that must be shown literally and truncated',
       status: 'busy',
-      lastCommand: 'echo "<b>not bold</b>" > notes/<script>.md',
     },
     {
       ...terminal,
@@ -83,7 +78,6 @@ function demoSessions() {
       name: 'Draft the newsletter for December',
       status: 'busy',
       planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 7),
-      lastCommand: 'git diff --stat drafts/december.md',
     },
     {
       ...terminal,
@@ -94,7 +88,6 @@ function demoSessions() {
       status: 'idle',
       before: 'busy',
       planItems: demoPlan(['List the folders', 'Rename', 'Check the links'], 4),
-      lastCommand: 'git status --short',
     },
   ];
 }

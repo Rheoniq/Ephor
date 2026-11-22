@@ -60,7 +60,6 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
     status: 'busy',
     finished: false,
     plan: null,
-    lastCommand: null,
     source: 'desktop',
     host: null,
   });
@@ -88,7 +87,6 @@ test('toSnapshotSession: a terminal session carries source terminal, host null a
     status: 'waiting',
     finished: false,
     plan: null,
-    lastCommand: null,
     source: 'terminal',
     host: null,
   });
@@ -104,9 +102,8 @@ test('toSnapshotSession: the JSON of a desktop session is the old JSON plus sour
     status: 'busy',
     finished: true,
     plan,
-    lastCommand: 'npm test',
   });
-  const now = JSON.stringify(toSnapshotSession(s, undefined, true, plan, 'npm test'));
+  const now = JSON.stringify(toSnapshotSession(s, undefined, true, plan));
   assert.equal(now, old.slice(0, -1) + ',"source":"desktop","host":null}');
 });
 
@@ -149,7 +146,6 @@ test('toSnapshotSession adds a prompt only when one is given', () => {
     status: 'waiting',
     finished: false,
     plan: null,
-    lastCommand: null,
     source: 'desktop',
     host: null,
     prompt,
@@ -197,16 +193,16 @@ test('snapshot gate mark() records a send made elsewhere', () => {
   assert.equal(g.shouldSend(a), false);
 });
 
-// --- Plan and last command -------------------------------------------------
+// --- Plan ------------------------------------------------------------------
 
 const items = (...statuses) => statuses.map((status, i) => ({ content: `Step ${i + 1}`, status }));
 
-test('toSnapshotSession carries plan and lastCommand when given', () => {
+test('toSnapshotSession carries the plan when given and no lastCommand', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy', cwd: 'C:\\x' };
   const plan = snapshotPlan(items('completed', 'in_progress'));
-  const out = toSnapshotSession(s, undefined, false, plan, 'npm test');
+  const out = toSnapshotSession({ ...s, lastCommand: 'npm test' }, undefined, false, plan);
   assert.deepEqual(out.plan, plan);
-  assert.equal(out.lastCommand, 'npm test');
+  assert.equal('lastCommand' in out, false);
   assert.deepEqual(Object.keys(out), [
     'sessionId',
     'hostSessionId',
@@ -214,19 +210,16 @@ test('toSnapshotSession carries plan and lastCommand when given', () => {
     'status',
     'finished',
     'plan',
-    'lastCommand',
     'source',
     'host',
   ]);
 });
 
-test('toSnapshotSession: plan and lastCommand default to null; non-strings are dropped', () => {
+test('toSnapshotSession: plan defaults to null', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy' };
   const out = toSnapshotSession(s);
   assert.equal(out.plan, null);
-  assert.equal(out.lastCommand, null);
-  assert.equal(toSnapshotSession(s, undefined, false, undefined, 42).lastCommand, null);
-  assert.equal(toSnapshotSession(s, undefined, false, undefined, '').lastCommand, null);
+  assert.equal('lastCommand' in out, false);
 });
 
 test('snapshotPlan is null without items', () => {
@@ -282,7 +275,7 @@ function fakeReader(results, { withForget = true } = {}) {
       calls.push(file);
       const r = results[file];
       if (r instanceof Error) throw r;
-      return r === undefined ? { items: null, lastCommand: null } : r;
+      return r === undefined ? { items: null } : r;
     },
   };
   if (withForget) reader.forget = (file) => forgotten.push(file);
@@ -298,19 +291,19 @@ test('createPlanSource reads the session transcript and summarises it', () => {
   const src = createPlanSource(reader, fileFor);
   const got = src.read({ sessionId: 'a' });
   assert.deepEqual(calls, ['T/a.jsonl']);
-  assert.equal(got.lastCommand, 'npm test');
+  assert.deepEqual(Object.keys(got), ['plan'], 'a stray lastCommand from the reader is not passed on');
   assert.equal(got.plan.current, 2);
   assert.equal(got.plan.total, 3);
 });
 
-test('createPlanSource: no plan gives null, a command still comes through', () => {
-  const { reader } = fakeReader({ 'T/a.jsonl': { items: null, lastCommand: 'ls' } });
+test('createPlanSource: no plan gives null', () => {
+  const { reader } = fakeReader({ 'T/a.jsonl': { items: null } });
   const got = createPlanSource(reader, fileFor).read({ sessionId: 'a' });
-  assert.deepEqual(got, { plan: null, lastCommand: 'ls' });
+  assert.deepEqual(got, { plan: null });
 });
 
 test('createPlanSource keeps the last good value when a read throws', () => {
-  const results = { 'T/a.jsonl': { items: items('in_progress'), lastCommand: 'git status' } };
+  const results = { 'T/a.jsonl': { items: items('in_progress') } };
   const { reader } = fakeReader(results);
   const errors = [];
   const src = createPlanSource(reader, fileFor, (id, err) => errors.push([id, err.message]));
@@ -320,17 +313,17 @@ test('createPlanSource keeps the last good value when a read throws', () => {
   assert.deepEqual(errors, [['a', 'boom']]);
   // A first read that throws gives an empty value.
   results['T/b.jsonl'] = new Error('boom');
-  assert.deepEqual(src.read({ sessionId: 'b' }), { plan: null, lastCommand: null });
+  assert.deepEqual(src.read({ sessionId: 'b' }), { plan: null });
 });
 
 test('createPlanSource survives a bad result shape and a throwing path helper', () => {
   const { reader } = fakeReader({ 'T/a.jsonl': null });
   const src = createPlanSource(reader, fileFor);
-  assert.deepEqual(src.read({ sessionId: 'a' }), { plan: null, lastCommand: null });
+  assert.deepEqual(src.read({ sessionId: 'a' }), { plan: null });
   const bad = createPlanSource(reader, () => {
     throw new Error('no path');
   });
-  assert.deepEqual(bad.read({ sessionId: 'a' }), { plan: null, lastCommand: null });
+  assert.deepEqual(bad.read({ sessionId: 'a' }), { plan: null });
 });
 
 test('createPlanSource.prune forgets sessions that left the kept list', () => {
@@ -353,14 +346,14 @@ test('createPlanSource.prune works with a reader that has no forget', () => {
 
 test('createPlanSource: the same transcript gives an equal snapshot (gate stays quiet)', () => {
   const { reader } = fakeReader({
-    'T/a.jsonl': { items: items('completed', 'in_progress'), lastCommand: 'x' },
+    'T/a.jsonl': { items: items('completed', 'in_progress') },
   });
   const src = createPlanSource(reader, fileFor);
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy' };
   const g = createSnapshotGate();
   const snap = () => {
     const p = src.read(s);
-    return { sessions: [toSnapshotSession(s, undefined, false, p.plan, p.lastCommand)] };
+    return { sessions: [toSnapshotSession(s, undefined, false, p.plan)] };
   };
   assert.equal(g.shouldSend(snap()), true);
   assert.equal(g.shouldSend(snap()), false);
@@ -371,9 +364,9 @@ test('toSnapshotSession sends no steps list, even when the session has one', () 
   assert.equal('steps' in toSnapshotSession(s), false);
 });
 
-test('demo sessions: the planned plans, and a command on each', () => {
+test('demo sessions: the planned plans, and no last command', () => {
   const sessions = demoSessions();
-  for (const s of sessions) assert.equal(typeof s.lastCommand, 'string', s.sessionId);
+  for (const s of sessions) assert.equal('lastCommand' in s, false, s.sessionId);
   // Shown in the panel: busy, waiting, or finished (idle now, busy before).
   const shownPlans = sessions
     .filter((s) => s.status !== 'idle' || s.before === 'busy')
@@ -411,21 +404,21 @@ test('demo sessions: two terminal sessions, a busy one with a plan and a finishe
 
 test('toSnapshotSession: a terminal session carries the host name it is given', () => {
   const t = { sessionId: 'b', name: 'N', status: 'busy', source: 'terminal' };
-  assert.equal(toSnapshotSession(t, undefined, false, null, null, 'Zed').host, 'Zed');
-  assert.equal(toSnapshotSession(t, undefined, false, null, null, null).host, null);
-  assert.equal(toSnapshotSession(t, undefined, false, null, null, '').host, null);
-  assert.equal(toSnapshotSession(t, undefined, false, null, null, 42).host, null);
+  assert.equal(toSnapshotSession(t, undefined, false, null, 'Zed').host, 'Zed');
+  assert.equal(toSnapshotSession(t, undefined, false, null, null).host, null);
+  assert.equal(toSnapshotSession(t, undefined, false, null, '').host, null);
+  assert.equal(toSnapshotSession(t, undefined, false, null, 42).host, null);
   assert.equal(toSnapshotSession(t).host, null);
 });
 
 test('toSnapshotSession: a desktop session never carries a host', () => {
   const d = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy', source: 'desktop' };
-  assert.equal(toSnapshotSession(d, undefined, false, null, null, 'Zed').host, null);
+  assert.equal(toSnapshotSession(d, undefined, false, null, 'Zed').host, null);
 });
 
 test('toSnapshotSession: the host stays before an optional prompt', () => {
   const t = { sessionId: 'b', name: 'N', status: 'waiting', source: 'terminal' };
-  const keys = Object.keys(toSnapshotSession(t, { kind: 'x' }, false, null, null, 'Zed'));
+  const keys = Object.keys(toSnapshotSession(t, { kind: 'x' }, false, null, 'Zed'));
   assert.deepEqual(keys.slice(-3), ['source', 'host', 'prompt']);
 });
 
