@@ -1,8 +1,8 @@
 'use strict';
 
 // Pure plan model. Replays the agent's update_plan tool inputs into a list of
-// items. Item text comes from transcripts and is untrusted: it is only
-// collapsed to one line, truncated and passed on as data.
+// items. Item text comes from transcripts and is untrusted: it is only made
+// one visible line (oneLine), truncated and passed on as data.
 
 const MAX_ITEMS = 30;
 const MAX_CONTENT = 200;
@@ -18,8 +18,30 @@ function isObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+// Characters that would make the shown text differ from what it is, each
+// shown as "?": control (Cc) and format (Cf) characters, among them the bidi
+// overrides and isolates, zero-width characters, the byte order mark and the
+// soft hyphen; the invisible variation selectors and the combining grapheme
+// joiner; and blank-looking characters (Hangul fillers, the blank Braille
+// pattern). Tab, line feed, vertical tab, form feed and carriage return are
+// line breaks and spacing: they collapse to a space instead.
+const SPACING_CONTROLS = /[\t\n\v\f\r]/g;
+const HIDDEN = /[\p{Cc}\p{Cf}͏︀-️\u{e0100}-\u{e01ef}ﾠㅤᅟᅠ⠀]/gu;
+
+// Untrusted text as one visible line: hidden characters as "?", runs of
+// whitespace as one space, trimmed.
 function oneLine(s) {
-  return s.replace(/\s+/g, ' ').trim();
+  return s.replace(SPACING_CONTROLS, ' ').replace(HIDDEN, '?').replace(/\s+/g, ' ').trim();
+}
+
+// Text cut to at most `max` UTF-16 units, the last one an ellipsis when cut.
+// Never leaves half a surrogate pair (as cutText in renderer/progress.js).
+function cutLine(text, max) {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max - 1);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return cut.trimEnd() + ELLIPSIS;
 }
 
 function normalizeItems(items) {
@@ -30,7 +52,7 @@ function normalizeItems(items) {
     if (!isObject(it) || typeof it.content !== 'string') continue;
     let content = oneLine(it.content);
     if (!content) continue;
-    if (content.length > MAX_CONTENT) content = content.slice(0, MAX_CONTENT - 1) + ELLIPSIS;
+    content = cutLine(content, MAX_CONTENT);
     const status = STATUSES.has(it.status) ? it.status : 'pending';
     out.push({ content, status });
   }
@@ -101,4 +123,14 @@ function summarize(items) {
   return { total, current: idx + 1, phase: items[idx].content, done, state };
 }
 
-module.exports = { normalizeItems, applyUpdate, replayPlan, summarize, WRAP_UP, MAX_ITEMS, MAX_CONTENT };
+module.exports = {
+  normalizeItems,
+  applyUpdate,
+  replayPlan,
+  summarize,
+  oneLine,
+  cutLine,
+  WRAP_UP,
+  MAX_ITEMS,
+  MAX_CONTENT,
+};

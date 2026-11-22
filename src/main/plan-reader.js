@@ -10,13 +10,12 @@
 // Plan text and commands are untrusted and passed on as data only.
 
 const fs = require('node:fs');
-const { applyUpdate, replayPlan, WRAP_UP } = require('./plan');
+const { applyUpdate, replayPlan, oneLine, cutLine, WRAP_UP } = require('./plan');
 
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan';
 const WRAP_UP_TOOL = 'mcp__ccd_turn__wrap_up';
 const COMMAND_TOOLS = new Set(['Bash', 'PowerShell']);
 const MAX_COMMAND = 160;
-const ELLIPSIS = '…';
 const NL = 0x0a;
 const TOOL_USE_MARK = Buffer.from('"tool_use"');
 
@@ -24,10 +23,12 @@ function emptyResult() {
   return { items: null, lastCommand: null };
 }
 
+// The command as one visible line (hidden characters as "?"), cut to
+// MAX_COMMAND without splitting a surrogate pair.
 function formatCommand(s) {
-  const line = s.replace(/\s+/g, ' ').trim();
+  const line = oneLine(s);
   if (!line) return null;
-  return line.length > MAX_COMMAND ? line.slice(0, MAX_COMMAND - 1) + ELLIPSIS : line;
+  return cutLine(line, MAX_COMMAND);
 }
 
 // Returns the tool_use blocks of one transcript line, in order, or [] when

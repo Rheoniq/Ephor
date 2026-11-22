@@ -103,6 +103,27 @@ test('returns the latest Bash or PowerShell command as one line cut to 160 chars
   assert.equal(createPlanReader().read(file).items, null);
 });
 
+test('the last command shows bidi, zero-width and control characters as ?', () => {
+  write([bash('rm -rf ./build ‮#txt.exe‬')]);
+  assert.equal(createPlanReader().read(file).lastCommand, 'rm -rf ./build ?#txt.exe?');
+  write([pwsh('\u001B[2K\u001B[1Aecho safe​⁦ && del x⁩\u0000')]);
+  assert.equal(createPlanReader().read(file).lastCommand, '?[2K?[1Aecho safe?? && del x??');
+  write([bash('a️\u{E0100}ﾠㅤᅟᅠ⠀b­؜﻿\u0085')]);
+  assert.equal(createPlanReader().read(file).lastCommand, 'a???????b????');
+  write([bash('​')]);
+  assert.equal(createPlanReader().read(file).lastCommand, '?', 'a command of only hidden characters still shows');
+});
+
+test('the last command keeps line breaks as spaces and never cuts an emoji in half', () => {
+  write([bash('git add .\r\n\tgit commit')]);
+  assert.equal(createPlanReader().read(file).lastCommand, 'git add . git commit');
+  // 'echo ' + 153 chars puts the emoji's high half at the 159th unit.
+  write([bash('echo ' + 'a'.repeat(153) + '\u{1F600}' + 'tail')]);
+  const c = createPlanReader().read(file).lastCommand;
+  assert.ok(c.isWellFormed(), 'no lone surrogate');
+  assert.equal(c, 'echo ' + 'a'.repeat(153) + '…');
+});
+
 test('stops at maxScanBytes: an items call beyond it is not found', () => {
   const lines = [plan({ items: items(3) })];
   for (let i = 0; i < 60; i++) lines.push(filler(i));

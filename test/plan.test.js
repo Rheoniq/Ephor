@@ -61,6 +61,55 @@ test('normalizeItems keeps at most 30 items', () => {
   assert.equal(out[29].content, 's29');
 });
 
+// Hostile text: nothing invisible or reordering may reach the panel.
+const NO_HIDDEN = /[\p{Cc}\p{Cf}͏︀-️\u{e0100}-\u{e01ef}ﾠㅤᅟᅠ⠀]/u;
+const one = (content) => normalizeItems([{ content }])[0].content;
+
+test('normalizeItems shows bidi overrides and isolates as ?', () => {
+  assert.equal(one('Deploy ‮gnp.exe‬ now'), 'Deploy ?gnp.exe? now');
+  assert.equal(one('‪‫‬‭‮|⁦⁧⁨⁩|‎‏؜'), '?????|????|???');
+});
+
+test('normalizeItems shows zero-width, BOM and soft hyphen characters as ?', () => {
+  assert.equal(one('a​b‌c‍d﻿e­f⁠g'), 'a?b?c?d?e?f?g');
+  assert.equal(one('﻿'), '?', 'a lone BOM is not taken for whitespace and dropped');
+});
+
+test('normalizeItems shows C0 and C1 controls as ?, but line breaks and tabs collapse to a space', () => {
+  assert.equal(one('a\u0000b\u001B[2Kc\u007Fd\u0085e\u009Bf'), 'a?b?[2Kc?d?e?f');
+  assert.equal(one('a\r\n\tb\u000Bc\u000Cd'), 'a b c d');
+});
+
+test('normalizeItems shows variation selectors and blank-looking characters as ?', () => {
+  assert.equal(one('x️y︀z\u{E0100}w\u{E01EF}'), 'x?y?z?w?');
+  assert.equal(one('[ﾠㅤᅟᅠ⠀͏]'), '[??????]');
+});
+
+test('normalizeItems output never carries a hidden character', () => {
+  let all = '';
+  for (let c = 0; c <= 0x3200; c++) all += String.fromCharCode(c);
+  all += '﻿ﾠ\u{E0001}\u{E0020}\u{E007F}\u{E0100}\u{E01EF}';
+  for (let k = 0; k < all.length; k += 150) {
+    const out = normalizeItems([{ content: 'x' + all.slice(k, k + 150) }]);
+    assert.ok(!NO_HIDDEN.test(out[0].content), `slice at ${k}`);
+  }
+});
+
+test('normalizeItems collapses other spaces to one plain space', () => {
+  assert.equal(one('a 　 b c'), 'a b c');
+});
+
+test('normalizeItems never cuts a surrogate pair in half', () => {
+  // The emoji straddles the cut: its high half would be the 199th unit.
+  const out = one('a'.repeat(198) + '\u{1F600}' + 'bbb');
+  assert.ok(out.isWellFormed(), 'no lone surrogate');
+  assert.equal(out, 'a'.repeat(198) + '…');
+  // An emoji just before the cut stays whole.
+  const kept = one('a'.repeat(197) + '\u{1F600}' + 'bbb');
+  assert.equal(kept, 'a'.repeat(197) + '\u{1F600}' + '…');
+  assert.equal(kept.length, 200);
+});
+
 test('normalizeItems keeps HTML in content as plain data', () => {
   const out = normalizeItems([{ content: '<img src=x onerror=alert(1)>', status: P }]);
   assert.equal(out[0].content, '<img src=x onerror=alert(1)>');
