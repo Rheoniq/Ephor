@@ -146,7 +146,7 @@
     const drain = el('span', 'prompt-drain');
     drain.setAttribute('aria-hidden', 'true');
     drain.dataset.promptId = id;
-    const hint = el('p', 'prompt-hint', 'Or answer in Claude Desktop (this card closes after 15 s)');
+    const hint = el('p', 'prompt-hint', 'Or answer in Claude Desktop (closes in 15 s)');
     card.append(kick, ...content, hint, drain);
     return card;
   }

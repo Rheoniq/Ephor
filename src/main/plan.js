@@ -26,7 +26,7 @@ function isObject(v) {
 // pattern). Tab, line feed, vertical tab, form feed and carriage return are
 // line breaks and spacing: they collapse to a space instead.
 const SPACING_CONTROLS = /[\t\n\v\f\r]/g;
-const HIDDEN = /[\p{Cc}\p{Cf}͏︀-️\u{e0100}-\u{e01ef}ﾠㅤᅟᅠ⠀]/gu;
+const HIDDEN = /[\p{Cc}\p{Cf}\u034F\uFE00-\uFE0F\u{e0100}-\u{e01ef}\uFFA0\u3164\u115F\u1160\u2800]/gu;
 
 // Untrusted text as one visible line: hidden characters as "?", runs of
 // whitespace as one space, trimmed.

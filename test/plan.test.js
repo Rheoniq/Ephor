@@ -62,7 +62,7 @@ test('normalizeItems keeps at most 30 items', () => {
 });
 
 // Hostile text: nothing invisible or reordering may reach the panel.
-const NO_HIDDEN = /[\p{Cc}\p{Cf}͏︀-️\u{e0100}-\u{e01ef}ﾠㅤᅟᅠ⠀]/u;
+const NO_HIDDEN = /[\p{Cc}\p{Cf}\u034F\uFE00-\uFE0F\u{e0100}-\u{e01ef}\uFFA0\u3164\u115F\u1160\u2800]/u;
 const one = (content) => normalizeItems([{ content }])[0].content;
 
 test('normalizeItems shows bidi overrides and isolates as ?', () => {
