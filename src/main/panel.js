@@ -2,6 +2,8 @@
 
 // Small pure helpers for the panel window.
 
+const { normalizeItems, summarize } = require('./plan');
+
 const MIN_HEIGHT = 40;
 const MAX_HEIGHT = 800;
 
@@ -33,7 +35,9 @@ function createSnapshotGate() {
 // keeps them out of the snapshot gate's comparison. `prompt` is set only
 // while a hook prompt for the session is held. `finished` is true only for a
 // session that just finished and was not looked at yet (finished.js).
-function toSnapshotSession(s, steps, prompt, finished) {
+// `plan` (from snapshotPlan) and `lastCommand` are always present, null when
+// unknown, so the snapshot keeps one shape.
+function toSnapshotSession(s, steps, prompt, finished, plan, lastCommand) {
   const out = {
     sessionId: s.sessionId,
     hostSessionId: s.hostSessionId,
@@ -41,9 +45,76 @@ function toSnapshotSession(s, steps, prompt, finished) {
     status: s.status,
     steps,
     finished: finished === true,
+    plan: plan || null,
+    lastCommand: typeof lastCommand === 'string' && lastCommand ? lastCommand : null,
   };
   if (prompt) out.prompt = prompt;
   return out;
+}
+
+// The plan as the renderer gets it: the normalised items (fresh copies) plus
+// the summary from plan.js, or null when there is no item.
+function snapshotPlan(items) {
+  const norm = normalizeItems(items);
+  const sum = summarize(norm);
+  if (!sum) return null;
+  return {
+    items: norm,
+    total: sum.total,
+    current: sum.current,
+    phase: sum.phase,
+    done: sum.done,
+    state: sum.state,
+  };
+}
+
+// Per-session plan and last command for the snapshot, through one shared
+// plan reader. `fileFor(session)` gives the transcript path. A read that
+// throws keeps the session's last good value (and reports through `onError`);
+// it never throws to the caller. prune(keptIds) drops sessions that left the
+// kept list and asks the reader to forget their files, when it can.
+function createPlanSource(reader, fileFor, onError) {
+  const last = new Map(); // sessionId -> { file, value }
+
+  function read(s) {
+    const prev = last.get(s.sessionId);
+    try {
+      const file = fileFor(s);
+      const r = reader.read(file);
+      const value = {
+        plan: snapshotPlan(r && r.items),
+        lastCommand: r && typeof r.lastCommand === 'string' && r.lastCommand ? r.lastCommand : null,
+      };
+      last.set(s.sessionId, { file, value });
+      return value;
+    } catch (err) {
+      if (typeof onError === 'function') {
+        try {
+          onError(s.sessionId, err);
+        } catch {
+          /* ignore */
+        }
+      }
+      return prev ? prev.value : { plan: null, lastCommand: null };
+    }
+  }
+
+  function prune(keptIds) {
+    const keep = new Set(keptIds);
+    for (const [id, entry] of last) {
+      if (keep.has(id)) continue;
+      last.delete(id);
+      if (typeof reader.forget === 'function') {
+        try {
+          reader.forget(entry.file);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  return { read, prune };
 }
 
 // Whether the panel shows a session. A dismissed session is never shown.
@@ -56,4 +127,13 @@ function isShown({ status, finished, hasPrompt, dismissalsVisible }) {
   return status === 'busy' || status === 'waiting' || finished === true || hasPrompt === true;
 }
 
-module.exports = { clampHeight, createSnapshotGate, toSnapshotSession, isShown, MIN_HEIGHT, MAX_HEIGHT };
+module.exports = {
+  clampHeight,
+  createSnapshotGate,
+  toSnapshotSession,
+  snapshotPlan,
+  createPlanSource,
+  isShown,
+  MIN_HEIGHT,
+  MAX_HEIGHT,
+};

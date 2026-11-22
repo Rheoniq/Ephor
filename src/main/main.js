@@ -26,7 +26,15 @@ const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
 const { createGrace } = require('./grace');
 const { createFinished } = require('./finished');
-const { clampHeight, createSnapshotGate, toSnapshotSession, isShown } = require('./panel');
+const {
+  clampHeight,
+  createSnapshotGate,
+  toSnapshotSession,
+  snapshotPlan,
+  createPlanSource,
+  isShown,
+} = require('./panel');
+const { createPlanReader } = require('./plan-reader');
 const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
@@ -107,6 +115,13 @@ let demoToastSent = false;
 const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
 const lastSteps = new Map(); // sessionId -> last good steps
+// One plan reader for all sessions; planSource keeps each session's last good
+// plan and last command and forgets sessions that left the kept list.
+const planSource = createPlanSource(
+  createPlanReader(),
+  (s) => transcriptPath(HOME, s.cwd, s.sessionId),
+  (id, err) => console.error(`[huddle] reading the plan for ${id} failed: ${err.message}`),
+);
 let win = null;
 // The expanded panel's top (see panelTarget).
 const panelAnchor = createPanelAnchor();
@@ -196,8 +211,16 @@ function buildDemoSnapshot() {
   const visible = notDismissed(kept);
   lastKept = kept;
   lastVisible = visible;
+  // Demo plans are fixed data: no transcript is read.
   const sessions = shownSessions(visible).map((s) =>
-    toSnapshotSession(s, s.steps, promptFor(s.sessionId), finished.isFinished(s.sessionId)),
+    toSnapshotSession(
+      s,
+      s.steps,
+      promptFor(s.sessionId),
+      finished.isFinished(s.sessionId),
+      snapshotPlan(s.planItems),
+      s.lastCommand,
+    ),
   );
   return { kept, snapshot: { sessions } };
 }
@@ -212,15 +235,25 @@ function buildSnapshot() {
   dismissals.prune(keptIds);
   finished.update(kept);
   for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
+  planSource.prune(keptIds);
   const visible = notDismissed(kept);
   lastKept = kept;
   lastVisible = visible;
   // Before the snapshot is built, so an ended hold shows no card and an idle
   // session whose prompt ended is no longer shown.
   endStaleHolds(visible);
-  const sessions = shownSessions(visible).map((s) =>
-    toSnapshotSession(s, safeSteps(s), promptFor(s.sessionId), finished.isFinished(s.sessionId)),
-  );
+  // Plans are read only for the shown sessions, so hidden ones cost nothing.
+  const sessions = shownSessions(visible).map((s) => {
+    const { plan, lastCommand } = planSource.read(s);
+    return toSnapshotSession(
+      s,
+      safeSteps(s),
+      promptFor(s.sessionId),
+      finished.isFinished(s.sessionId),
+      plan,
+      lastCommand,
+    );
+  });
   return { kept, snapshot: { sessions } };
 }
 

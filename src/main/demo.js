@@ -1,7 +1,19 @@
 'use strict';
 
+// A demo plan: the items before `current` (1-based) are completed, item
+// `current` is in progress and the rest are pending. `current` past the end
+// gives a complete plan.
+function demoPlan(contents, current) {
+  return contents.map((content, i) => ({
+    content,
+    status: i + 1 < current ? 'completed' : i + 1 === current ? 'in_progress' : 'pending',
+  }));
+}
+
 // Fixed fake sessions for HUDDLE_DEMO=1, so the UI can be checked without
 // reading ~/.claude. Steps are oldest first, like readSteps returns them.
+// `planItems` are update_plan items as the plan reader returns them (no key
+// means no plan); `lastCommand` is the last shell command.
 function demoSessions() {
   const now = Date.now();
   const base = { cwd: 'C:\\demo', pid: 0, updatedAt: now };
@@ -13,6 +25,11 @@ function demoSessions() {
       name: 'Write plan 5: the vault sync and backup rotation',
       status: 'busy',
       steps: ['Read docs/plan.md', 'Edit src/vault.js', 'Ran: npm test'],
+      planItems: demoPlan(
+        ['Read the spec', 'Plan model', 'Transcript reader', 'Snapshot wiring', 'Animations', 'Docs', 'Review'],
+        5,
+      ),
+      lastCommand: 'npm test -- test/panel.test.js',
     },
     {
       ...base,
@@ -21,6 +38,8 @@ function demoSessions() {
       name: 'Run plan 4, Tasks 7 to 9 and report back',
       status: 'waiting',
       steps: ['Edit src/a.js', 'Ran: npm test -- --watch=false', 'Asked you a question'],
+      planItems: demoPlan(['Read the plan', 'Watching', 'Task 7', 'Task 8', 'Task 9'], 2),
+      lastCommand: 'npm test -- --watch=false',
     },
     {
       ...base,
@@ -32,6 +51,8 @@ function demoSessions() {
       status: 'idle',
       before: 'busy',
       steps: ['Read src/export.js', 'Edit src/export.js', 'Ran: npm test'],
+      planItems: demoPlan(['Read the export', 'Fix the totals', 'Add a test', 'Run the tests'], 5),
+      lastCommand: 'npm test',
     },
     {
       ...base,
@@ -41,14 +62,27 @@ function demoSessions() {
       name: 'Notification sounds configuration',
       status: 'idle',
       steps: [],
+      lastCommand: 'git status',
     },
     {
       ...base,
+      // No plan: the panel shows it without a bar.
       sessionId: 'demo-long',
       hostSessionId: 'local_demo-long',
       name: 'A very long session name with <b>x</b> markup that must be shown literally and truncated',
       status: 'busy',
       steps: ['Write <script>alert(1)</script>.md'],
+      lastCommand: 'echo "<b>not bold</b>" > notes/<script>.md',
+    },
+    {
+      ...base,
+      sessionId: 'demo-drafting',
+      hostSessionId: 'local_demo-drafting',
+      name: 'Draft the newsletter for December',
+      status: 'busy',
+      steps: ['Read notes/ideas.md', 'Write drafts/december.md'],
+      planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 4),
+      lastCommand: 'git diff --stat drafts/december.md',
     },
   ];
 }
