@@ -27,6 +27,9 @@
   const expanded = new Set(); // sessionIds whose step list is open
   const promptStates = new Map(); // prompt id -> HuddlePrompt state
   let sessions = [];
+  // Avatar colors (task 3): sessionId -> palette index, so no two visible
+  // sessions share a color. Updated on each render by HuddleColors.
+  let colorOf = new Map();
   let collapsed = false; // set by main through onUiState
   let armTimer = null;
 
@@ -168,7 +171,7 @@
     body.dataset.role = 'body';
     body.setAttribute('aria-expanded', String(isOpen));
     body.title = name;
-    const avatar = window.HuddleAvatar.createAvatar(document, id, status);
+    const avatar = window.HuddleAvatar.createAvatar(document, id, status, colorOf.get(id));
     const nameBox = el('span', 'name-box');
     nameBox.append(el('span', 'name', name));
     const tagText = isFinished ? TAGS.finished : TAGS[status];
@@ -230,6 +233,8 @@
 
     const ids = new Set(sessions.map((s) => str(s.sessionId)));
     for (const id of expanded) if (!ids.has(id)) expanded.delete(id);
+    // Avatar colors (task 3): keep, free and hand out palette indexes.
+    colorOf = window.HuddleColors.assignColors([...ids], colorOf, window.HuddleAvatar.PALETTE.length);
     // A prompt no longer in the snapshot was answered, timed out or ended.
     const promptIds = new Set(sessions.map((s) => (s && s.prompt ? s.prompt.id : null)));
     for (const id of promptStates.keys()) if (!promptIds.has(id)) promptStates.delete(id);

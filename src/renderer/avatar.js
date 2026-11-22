@@ -9,10 +9,16 @@
 (function (root) {
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
-  // Clay, olive green, sky blue, plum, golden, teal. Mid-tones, each at least
-  // 3:1 against the light and dark cards (plain and waiting tint), so the
-  // creature reads in both themes; the ink eyes stay at least 3:1 on each.
-  const PALETTE = ['#c96442', '#788c5d', '#5789bf', '#a46d9f', '#ad7e0a', '#289588'];
+  // Twelve mid-tones: clay, olive green, sky blue, plum, golden, teal, then
+  // rose, violet, forest, steel, amber brown, cocoa. Each is at least 3:1
+  // against the light and dark cards (plain and waiting tint), so the
+  // creature reads in both themes; the ink eyes stay at least 3:1 on each,
+  // and any two differ by a CIE76 delta E of 18 or more. The first six come
+  // first so a few sessions look as before.
+  const PALETTE = [
+    '#c96442', '#788c5d', '#5789bf', '#a46d9f', '#ad7e0a', '#289588',
+    '#c85f78', '#877dcd', '#37965f', '#148ca5', '#a07d46', '#a5786e',
+  ];
 
   const EYE = '#141413';
 
@@ -81,10 +87,14 @@
   const PULSE = [[10, 2, 1, 1]];
   const ALERT = [[11, 0, 1, 2], [11, 3, 1, 1]];
 
-  function createAvatar(doc, sessionId, status) {
+  // colorIdx, when an integer within the palette, overrides the hash color
+  // (the renderer passes the per-session assignment); the variant stays
+  // hash-based.
+  function createAvatar(doc, sessionId, status, colorIdx) {
     const st = STATUSES.includes(status) ? status : 'idle';
     const variant = variantIndex(sessionId);
-    const color = PALETTE[colorIndex(sessionId)];
+    const useIdx = Number.isInteger(colorIdx) && colorIdx >= 0 && colorIdx < PALETTE.length;
+    const color = PALETTE[useIdx ? colorIdx : colorIndex(sessionId)];
 
     function node(tag, attrs) {
       const n = doc.createElementNS(SVG_NS, tag);

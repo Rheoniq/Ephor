@@ -72,6 +72,25 @@ function byClass(svg, name) {
   return walk(svg).filter((n) => hasClass(n, name));
 }
 
+// CIE76 color difference in L*a*b* (D65): two avatars side by side at
+// 36 px need a clearly visible difference, so near-duplicates are rejected.
+function lab(hex) {
+  const [r, g, b] = [1, 3, 5]
+    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  const x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+}
+
+function deltaE(a, b) {
+  const p = lab(a);
+  const q = lab(b);
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+}
+
 function luminance(hex) {
   const c = [1, 3, 5]
     .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
@@ -99,8 +118,8 @@ function idWithVariant(v) {
   throw new Error(`no id found for variant ${v}`);
 }
 
-test('PALETTE has six distinct hex colors readable on every card color', () => {
-  assert.equal(PALETTE.length, 6);
+test('PALETTE has twelve distinct hex colors readable on every card color', () => {
+  assert.equal(PALETTE.length, 12);
   for (const c of PALETTE) {
     assert.match(c, /^#[0-9a-f]{6}$/i);
     for (const [name, card] of Object.entries(CARDS)) {
@@ -109,21 +128,34 @@ test('PALETTE has six distinct hex colors readable on every card color', () => {
     // The square eyes stay visible on every body color.
     assert.ok(contrast(EYE, c) >= 3, `eyes on ${c}`);
   }
-  assert.equal(new Set(PALETTE.map((c) => c.toLowerCase())).size, 6);
+  assert.equal(new Set(PALETTE.map((c) => c.toLowerCase())).size, 12);
 });
 
-test('colorIndex is deterministic and within 0..5', () => {
+test('PALETTE keeps the six original colors first', () => {
+  assert.deepEqual(PALETTE.slice(0, 6), ['#c96442', '#788c5d', '#5789bf', '#a46d9f', '#ad7e0a', '#289588']);
+});
+
+test('PALETTE colors differ from each other by a CIE76 delta E of at least 18', () => {
+  for (let i = 0; i < PALETTE.length; i++) {
+    for (let j = i + 1; j < PALETTE.length; j++) {
+      const d = deltaE(PALETTE[i], PALETTE[j]);
+      assert.ok(d >= 18, `${PALETTE[i]} vs ${PALETTE[j]}: ${d.toFixed(1)}`);
+    }
+  }
+});
+
+test('colorIndex is deterministic and within 0..11', () => {
   for (const id of ['', 'a', 'demo-busy', 'local_123', crypto.randomUUID()]) {
     const i = colorIndex(id);
     assert.equal(i, colorIndex(id));
-    assert.ok(Number.isInteger(i) && i >= 0 && i <= 5, `${id} -> ${i}`);
+    assert.ok(Number.isInteger(i) && i >= 0 && i < PALETTE.length, `${id} -> ${i}`);
   }
 });
 
 test('colorIndex tolerates non-string input', () => {
   for (const v of [undefined, null, 42, {}]) {
     const i = colorIndex(v);
-    assert.ok(Number.isInteger(i) && i >= 0 && i <= 5);
+    assert.ok(Number.isInteger(i) && i >= 0 && i < PALETTE.length);
   }
 });
 
@@ -155,13 +187,13 @@ test('variantIndex uses all three variants over 50 random uuids', () => {
 });
 
 test('variantIndex is mixed apart from colorIndex', () => {
-  // Same color does not mean same variant: 300 ids cover most of the 18 pairs.
+  // Same color does not mean same variant: 600 ids cover most of the 36 pairs.
   const pairs = new Set();
-  for (let n = 0; n < 300; n++) {
+  for (let n = 0; n < 600; n++) {
     const id = crypto.randomUUID();
     pairs.add(`${colorIndex(id)}:${variantIndex(id)}`);
   }
-  assert.ok(pairs.size >= 15, `only ${pairs.size} of 18 color and variant pairs`);
+  assert.ok(pairs.size >= 30, `only ${pairs.size} of 36 color and variant pairs`);
 });
 
 for (const status of ['busy', 'waiting', 'idle']) {
@@ -192,6 +224,28 @@ test('createAvatar fills the body with the session palette color', () => {
   const body = byClass(svg, 'av-body');
   assert.ok(body.length >= 1);
   for (const n of body) assert.equal(n.attributes.fill, color);
+});
+
+test('createAvatar uses an in-range color index instead of the hash', () => {
+  const own = colorIndex('session-1');
+  for (const idx of [0, 7, 11, (own + 5) % 12]) {
+    const svg = createAvatar(fakeDocument(), 'session-1', 'busy', idx);
+    for (const n of byClass(svg, 'av-body')) assert.equal(n.attributes.fill, PALETTE[idx]);
+  }
+});
+
+test('createAvatar ignores an out-of-range or non-integer color index', () => {
+  const color = PALETTE[colorIndex('session-1')];
+  for (const idx of [-1, 12, 99, 1.5, '3', null, NaN]) {
+    const svg = createAvatar(fakeDocument(), 'session-1', 'idle', idx);
+    for (const n of byClass(svg, 'av-body')) assert.equal(n.attributes.fill, color, `index ${String(idx)}`);
+  }
+});
+
+test('createAvatar keeps the hash variant when a color index is given', () => {
+  const id = idWithVariant(2);
+  const svg = createAvatar(fakeDocument(), id, 'idle', 0);
+  assert.ok(svg.classList.contains('av-v2'));
 });
 
 test('createAvatar marks the variant and draws it differently', () => {
