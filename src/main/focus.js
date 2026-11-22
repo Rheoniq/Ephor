@@ -111,6 +111,7 @@ const MAX_FOLDER_NAME = 260;
 const MAX_LIST_PIDS = 64;
 const MAX_TITLE = 512;
 const HWND_RE = /^[0-9]{1,20}$/;
+const MAX_HWND = 0xffffffffffffffffn;
 
 function isValidPid(pid) {
   return Number.isSafeInteger(pid) && pid > 0 && pid <= MAX_PID;
@@ -180,20 +181,89 @@ function readFocusWindowScript() {
   }
 }
 
-// Brings the best window of ownerPid to the front: a visible, titled top-level
-// window whose title contains folderName (case-insensitive), else the first.
-// Resolves 'focused', 'not-found' (no such window) or 'failed'. Never rejects.
+// A window handle as the script prints it: a non-zero unsigned 64-bit decimal.
+function isValidHwnd(hwnd) {
+  if (typeof hwnd !== 'string' || !HWND_RE.test(hwnd)) return false;
+  const v = BigInt(hwnd);
+  return v > 0n && v <= MAX_HWND;
+}
+
+// Characters that end a folder name inside a title: whitespace, an em or en
+// dash, a pipe, a colon, a bracket or a parenthesis (or the end of the title).
+const RIGHT_BOUNDARY = /[\s\u2014\u2013|:[\]()]/u;
+// A letter, mark, digit or underscore continues a name. A hyphen or a dot
+// before the match also does, so "Huddle" does not match "Old-Huddle" or
+// "x.Huddle" as a whole name.
+const NAME_CHAR = /[\p{L}\p{M}\p{N}_.-]/u;
+
+// The whole character before index i, a surrogate pair included.
+function charBefore(s, i) {
+  const low = s.charCodeAt(i - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && i >= 2) {
+    const high = s.charCodeAt(i - 2);
+    if (high >= 0xd800 && high <= 0xdbff) return s.slice(i - 2, i);
+  }
+  return s[i - 1];
+}
+
+// True when lowerFolder appears in lowerTitle as a whole name: start of title
+// or a non-name character on the left, a RIGHT_BOUNDARY or the end on the right.
+// Both are already lower case; lower-casing never turns a boundary character
+// into a name character, so the check on the lowered title is exact.
+function boundaryMatch(lowerTitle, lowerFolder) {
+  let from = 0;
+  for (;;) {
+    const i = lowerTitle.indexOf(lowerFolder, from);
+    if (i === -1) return false;
+    const end = i + lowerFolder.length;
+    const left = i === 0 || !NAME_CHAR.test(charBefore(lowerTitle, i));
+    const right = end === lowerTitle.length || RIGHT_BOUNDARY.test(lowerTitle[end]);
+    if (left && right) return true;
+    from = i + 1;
+  }
+}
+
+// The hwnd to focus among one process's windows (topmost first): normal
+// windows (not a tool window, no owner, not cloaked on another desktop) when
+// there are any, else all; within them the first whole-name match of
+// folderName (case-insensitive), else the first plain substring match, else
+// the first window. null when there is no well-formed window.
+function chooseWindow(windows, folderName) {
+  if (!Array.isArray(windows)) return null;
+  const valid = windows.filter((w) => w && typeof w.title === 'string' && isValidHwnd(w.hwnd));
+  if (valid.length === 0) return null;
+  const normal = valid.filter((w) => w.normal === true);
+  const pool = (normal.length ? normal : valid).map((w) => ({ hwnd: w.hwnd, title: w.title.toLowerCase() }));
+  const folder = typeof folderName === 'string' ? folderName.toLowerCase() : '';
+  if (folder) {
+    const whole = pool.find((w) => boundaryMatch(w.title, folder));
+    if (whole) return whole.hwnd;
+    const part = pool.find((w) => w.title.includes(folder));
+    if (part) return part.hwnd;
+  }
+  return pool[0].hwnd;
+}
+
+// Brings the best window of ownerPid to the front. Two script calls: list the
+// process's windows, choose one here (chooseWindow), then focus that hwnd; the
+// script checks again that it is a visible top-level window of ownerPid. The
+// folder name never reaches the script. Resolves 'focused', 'not-found' (no
+// such window, or it went away) or 'failed'. Never rejects.
 async function focusWindowOf(target, deps = {}) {
   const { ownerPid, folderName } = target && typeof target === 'object' ? target : {};
   if (!isValidPid(ownerPid)) return 'failed';
   const folder = folderName == null ? '' : folderName;
   if (typeof folder !== 'string' || folder.length > MAX_FOLDER_NAME) return 'failed';
+  const listed = await listWindows([ownerPid], deps);
+  if (listed === null) return 'failed';
+  const hwnd = chooseWindow(listed.get(ownerPid), folder);
+  if (hwnd === null) return 'not-found';
   const script = readFocusWindowScript();
   if (script === null) return 'failed';
   const run = (deps && deps.run) || runPowerShell;
   let res;
   try {
-    res = await run(script, { mode: 'focus', ownerPid, folderName: folder }, { timeoutMs: FOCUS_WINDOW_TIMEOUT_MS });
+    res = await run(script, { mode: 'focus', ownerPid, hwnd }, { timeoutMs: FOCUS_WINDOW_TIMEOUT_MS });
   } catch {
     return 'failed';
   }
@@ -203,50 +273,64 @@ async function focusWindowOf(target, deps = {}) {
   return 'failed';
 }
 
-// The script's list output as Map<pid, [{ hwnd, title }]> in the script's
-// order (topmost first), only for asked pids, only well-formed rows.
-function parseWindowList(text, pids) {
-  const out = new Map();
-  if (typeof text !== 'string') return out;
+function parseRows(text) {
+  if (typeof text !== 'string') return null;
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    return out;
+    return null;
   }
   if (data && typeof data === 'object' && !Array.isArray(data)) data = [data];
-  if (!Array.isArray(data)) return out;
+  return Array.isArray(data) ? data : null;
+}
+
+function windowMap(rows, pids) {
+  const out = new Map();
   const wanted = new Set(Array.isArray(pids) ? pids : []);
-  for (const row of data) {
+  for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     const { pid, hwnd, title } = row;
     if (!wanted.has(pid)) continue;
-    if (typeof hwnd !== 'string' || !HWND_RE.test(hwnd)) continue;
+    if (!isValidHwnd(hwnd)) continue;
     if (typeof title !== 'string' || title.length === 0) continue;
     if (!out.has(pid)) out.set(pid, []);
-    out.get(pid).push({ hwnd, title: title.slice(0, MAX_TITLE) });
+    out.get(pid).push({ hwnd, title: title.slice(0, MAX_TITLE), normal: row.normal === true });
   }
   return out;
 }
 
-// The visible, titled top-level windows of each pid, in one PowerShell call.
-// Pids without windows are absent from the map. Never rejects: any failure
-// gives an empty map.
-async function windowsOf(pids, deps = {}) {
-  if (!Array.isArray(pids)) return new Map();
+// The script's list output as Map<pid, [{ hwnd, title, normal }]> in the
+// script's order (topmost first), only for asked pids, only well-formed rows.
+function parseWindowList(text, pids) {
+  const rows = parseRows(text);
+  return rows === null ? new Map() : windowMap(rows, pids);
+}
+
+// Like windowsOf, but null when the call or its output fails.
+async function listWindows(pids, deps) {
   const valid = [...new Set(pids.filter(isValidPid))].slice(0, MAX_LIST_PIDS);
   if (valid.length === 0) return new Map();
   const script = readFocusWindowScript();
-  if (script === null) return new Map();
+  if (script === null) return null;
   const run = (deps && deps.run) || runPowerShell;
   let res;
   try {
     res = await run(script, { mode: 'list', pids: valid }, { timeoutMs: LIST_WINDOWS_TIMEOUT_MS });
   } catch {
-    return new Map();
+    return null;
   }
-  if (!res || res.code !== 0) return new Map();
-  return parseWindowList(res.stdout, valid);
+  if (!res || typeof res !== 'object' || res.code !== 0) return null;
+  const rows = parseRows(res.stdout);
+  return rows === null ? null : windowMap(rows, valid);
+}
+
+// The visible, titled top-level windows of each pid, in one PowerShell call,
+// each flagged normal or not. Pids without windows are absent from the map.
+// Never rejects: any failure gives an empty map.
+async function windowsOf(pids, deps = {}) {
+  if (!Array.isArray(pids)) return new Map();
+  return (await listWindows(pids, deps)) || new Map();
 }
 
 module.exports = {
@@ -256,6 +340,7 @@ module.exports = {
   SESSION_ID_RE,
   focusWindowOf,
   windowsOf,
+  chooseWindow,
   runPowerShell,
   asciiJson,
   parseWindowList,

@@ -15,6 +15,11 @@ const LOAD_TABLE_TIMEOUT_MS = 5000;
 const MAX_NAME = 24;
 const MAX_EXE_NAME = 260;
 const MAX_CACHE = 256;
+// The registry's procStart and WMI's CreationDate are both FILETIME ticks
+// (100 ns); WMI keeps microseconds only, so allow 1 ms between them.
+const START_TOLERANCE = 10000n;
+const MAX_TICKS = 0xffffffffffffffffn;
+const TICKS_RE = /^[0-9]{1,20}$/;
 
 const FRIENDLY = new Map([
   ['zed.exe', 'Zed'],
@@ -45,6 +50,17 @@ function lower(name) {
   return typeof name === 'string' ? name.toLowerCase() : '';
 }
 
+// A FILETIME tick count as a BigInt; 0n means unknown. FILETIME values pass
+// Number.MAX_SAFE_INTEGER, so they travel as decimal strings; a safe
+// non-negative integer number is accepted too. Anything else is unknown.
+function toTicks(value) {
+  let t = 0n;
+  if (typeof value === 'bigint') t = value;
+  else if (typeof value === 'string' && TICKS_RE.test(value)) t = BigInt(value);
+  else if (Number.isSafeInteger(value)) t = BigInt(value);
+  return t > 0n && t <= MAX_TICKS ? t : 0n;
+}
+
 // Short visible name for an executable: a known host's name, else the file
 // name without its extension, hidden characters as "?", cut to 24 characters.
 function friendlyName(exeName) {
@@ -65,24 +81,29 @@ function indexTable(table) {
     const { pid, ppid, name } = row;
     if (!Number.isSafeInteger(pid) || pid < 0 || !Number.isSafeInteger(ppid) || ppid < 0) continue;
     if (typeof name !== 'string') continue;
-    if (!index.has(pid)) index.set(pid, { pid, ppid, name });
+    if (!index.has(pid)) index.set(pid, { pid, ppid, name, start: toTicks(row.start) });
   }
   return index;
 }
 
 // The chain from pid upward: [{ pid, name }], pid first. Stops at a missing
-// parent, a cycle, pid 0 or 4 (Idle, System) or after maxDepth entries.
+// parent, a cycle, pid 0 or 4 (Idle, System), after maxDepth entries, and at a
+// parent that started after its child (its pid was reused by a newer process)
+// or whose start time, or the child's, is unknown.
 function walkAncestors(table, pid, maxDepth = MAX_DEPTH) {
   const index = table instanceof Map ? table : indexTable(table);
   const chain = [];
   const seen = new Set();
   let cur = pid;
+  let child = null;
   while (chain.length < maxDepth) {
     if (!Number.isSafeInteger(cur) || cur === 0 || cur === 4 || seen.has(cur)) break;
     const row = index.get(cur);
     if (!row) break;
+    if (child && (child.start === 0n || row.start === 0n || row.start > child.start)) break;
     seen.add(cur);
     chain.push({ pid: row.pid, name: row.name });
+    child = row;
     cur = row.ppid;
   }
   return chain;
@@ -107,12 +128,20 @@ function ownsWindow(found, pid) {
   return Array.isArray(v) ? v.length > 0 : true;
 }
 
-// resolve(pid, startKey) -> { name, ownerPid } | null. One process-table load
-// per ttlMs window, shared by every lookup. hasVisibleWindow(pids) answers for
-// all candidates in one call (windowsOf). An owner is cached per pid and
-// startKey (the registry's procStart, so a reused pid never hits an old entry)
-// and served again only while the current table still shows it in the chain.
-// "No owner" is remembered for ttlMs. Never rejects.
+function sameStart(a, b) {
+  if (a === 0n || b === 0n) return false;
+  const d = a > b ? a - b : b - a;
+  return d <= START_TOLERANCE;
+}
+
+// resolve(pid, startKey, { revalidate }) -> { name, ownerPid } | null.
+// startKey is the registry's procStart (FILETIME ticks); without it there is no
+// answer. A cache hit is served at once, with no table load: the refresh path
+// stays free. A miss, or revalidate: true (the click path), uses the shared
+// process table (at most one load per ttlMs) and checks that the pid's start
+// matches startKey within 1 ms and, for a cached owner, that it is still in the
+// chain. hasVisibleWindow(pids) answers for all candidates in one call
+// (windowsOf). "No owner" is remembered for ttlMs. Never rejects.
 function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs = DEFAULT_TTL_MS } = {}) {
   let table = null; // { at, promise -> Map | null }
   const cache = new Map(); // key -> { ownerPid, exe, name } | { none: true, until }
@@ -137,11 +166,20 @@ function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs
     cache.set(key, value);
   }
 
-  async function compute(pid, key) {
+  async function compute(pid, start, key) {
     const index = await snapshot();
     if (!index) return null;
+    const self = index.get(pid);
+    if (!self || !sameStart(self.start, start)) {
+      // The registry entry does not describe the live process (anymore).
+      cache.delete(key);
+      return null;
+    }
     const candidates = hostCandidates(walkAncestors(index, pid));
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) {
+      cache.delete(key);
+      return null;
+    }
     const cached = cache.get(key);
     if (cached && !cached.none) {
       const still = candidates.some((c) => c.pid === cached.ownerPid && lower(c.name) === cached.exe);
@@ -166,22 +204,36 @@ function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs
     return result;
   }
 
-  function resolve(pid, startKey) {
-    if (!isValidPid(pid)) return Promise.resolve(null);
-    const key = `${pid}|${startKey == null ? '' : String(startKey)}`;
-    const pending = inflight.get(key);
-    if (pending) return pending;
-    const p = compute(pid, key)
-      .catch(() => null)
-      .finally(() => inflight.delete(key));
-    inflight.set(key, p);
-    return p;
+  function resolve(pid, startKey, options) {
+    try {
+      if (!isValidPid(pid)) return Promise.resolve(null);
+      const start = toTicks(startKey);
+      if (start === 0n) return Promise.resolve(null);
+      const revalidate = Boolean(options && options.revalidate);
+      const key = `${pid}|${start}`;
+      if (!revalidate) {
+        const cached = cache.get(key);
+        if (cached && !cached.none) return Promise.resolve({ name: cached.name, ownerPid: cached.ownerPid });
+        if (cached && cached.none && now() < cached.until) return Promise.resolve(null);
+      }
+      const flight = `${key}|${revalidate ? 'check' : 'miss'}`;
+      const pending = inflight.get(flight);
+      if (pending) return pending;
+      const p = compute(pid, start, key)
+        .catch(() => null)
+        .finally(() => inflight.delete(flight));
+      inflight.set(flight, p);
+      return p;
+    } catch {
+      return Promise.resolve(null);
+    }
   }
 
   return { resolve };
 }
 
-// Rows of the process table script, only well-formed ones. Tolerates garbage.
+// Rows of the process table script, only well-formed ones; start is FILETIME
+// ticks as a BigInt, 0n when missing or malformed. Tolerates garbage.
 function parseProcessTable(text) {
   if (typeof text !== 'string') return [];
   let data;
@@ -198,16 +250,19 @@ function parseProcessTable(text) {
     const { pid, ppid, name } = row;
     if (!Number.isSafeInteger(pid) || pid < 0 || !Number.isSafeInteger(ppid) || ppid < 0) continue;
     if (typeof name !== 'string' || name.length === 0) continue;
-    out.push({ pid, ppid, name: name.slice(0, MAX_EXE_NAME) });
+    out.push({ pid, ppid, name: name.slice(0, MAX_EXE_NAME), start: toTicks(row.start) });
   }
   return out;
 }
 
-// Fixed text, no data: pid, parent pid and name of every process, as ASCII JSON.
+// Fixed text, no data: pid, parent pid, name and creation time (FILETIME ticks
+// as a decimal string, '0' when unknown) of every process, as ASCII JSON.
 const PROCESS_TABLE_SCRIPT = `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$rows = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,Name | ForEach-Object {
-  [pscustomobject]@{ pid = [long]$_.ProcessId; ppid = [long]$_.ParentProcessId; name = [string]$_.Name }
+$rows = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | ForEach-Object {
+  $start = '0'
+  if ($null -ne $_.CreationDate) { $start = [string]$_.CreationDate.ToFileTimeUtc() }
+  [pscustomobject]@{ pid = [long]$_.ProcessId; ppid = [long]$_.ParentProcessId; name = [string]$_.Name; start = $start }
 })
 $json = ConvertTo-Json -InputObject $rows -Compress
 [regex]::Replace($json, '[^\\x20-\\x7e]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })

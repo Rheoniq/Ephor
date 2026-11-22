@@ -1,14 +1,17 @@
-# List the top-level windows of processes, or bring one window of a process to the front.
+# List the top-level windows of processes, or bring one chosen window to the front.
 # Fixed script: every value arrives as JSON on stdin and is only compared, never
 # evaluated. The only window actions are SW_RESTORE on a minimized target and
 # bringing that target to the foreground; nothing is closed, moved or typed into.
 #
 # stdin {"mode":"list","pids":[n,...]}
-#   prints [{"pid":n,"hwnd":"n","title":"..."}] as ASCII JSON, topmost first; exit 0.
-# stdin {"mode":"focus","ownerPid":n,"folderName":"..."}
-#   picks the first window whose title contains folderName (ignoring case), else
-#   the first window. Exit 0 = it is now the foreground window, 2 = the process
-#   has no visible titled top-level window, 3 = Windows refused the switch.
+#   prints [{"pid":n,"hwnd":"n","title":"...","normal":true}] as ASCII JSON, topmost
+#   first; normal = not a tool window, no owner window, not cloaked (for example
+#   on another virtual desktop). Exit 0.
+# stdin {"mode":"focus","ownerPid":n,"hwnd":"n"}
+#   checks again that hwnd is a visible top-level window owned by ownerPid, then
+#   restores it if minimized and brings it to the foreground. Exit 0 = it is now
+#   the foreground window, 2 = it is gone or no longer such a window of ownerPid,
+#   3 = Windows refused the switch.
 # Exit 1 = bad input or any error.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -33,16 +36,20 @@ using System.Threading;
 namespace HuddleWindow {
   public class Found {
     public uint Pid;
-    public IntPtr Hwnd;
     public string HwndText;
     public string Title;
+    public bool Normal;
   }
 
   public static class Native {
     private delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(IntPtr hWnd, int index);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
@@ -51,6 +58,23 @@ namespace HuddleWindow {
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
     [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint from, uint to, bool attach);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int value, int size);
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_TOOLWINDOW = 0x80;
+    private const uint GW_OWNER = 4;
+    private const uint GA_ROOT = 2;
+    private const int DWMWA_CLOAKED = 14;
+    private const int SW_RESTORE = 9;
+
+    private static bool IsCloaked(IntPtr h) {
+      try {
+        int cloaked;
+        return DwmGetWindowAttribute(h, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0;
+      } catch {
+        return false;
+      }
+    }
 
     // Visible, titled top-level windows of the given pids, in Z order (topmost first).
     // GetWindowText reads another process's caption without sending it a message.
@@ -65,9 +89,11 @@ namespace HuddleWindow {
         if (GetWindowTextW(h, sb, sb.Capacity) <= 0) return true;
         Found f = new Found();
         f.Pid = pid;
-        f.Hwnd = h;
         f.HwndText = unchecked((ulong)h.ToInt64()).ToString();
         f.Title = sb.ToString();
+        bool tool = (GetWindowLong(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0;
+        bool owned = GetWindow(h, GW_OWNER) != IntPtr.Zero;
+        f.Normal = !tool && !owned && !IsCloaked(h);
         found.Add(f);
         return true;
       };
@@ -76,17 +102,13 @@ namespace HuddleWindow {
       return found;
     }
 
-    public static int Focus(uint ownerPid, string folder) {
-      List<Found> wins = List(new uint[] { ownerPid });
-      if (wins.Count == 0) return 2;
-      Found target = wins[0];
-      if (folder.Length > 0) {
-        foreach (Found w in wins) {
-          if (w.Title.IndexOf(folder, StringComparison.OrdinalIgnoreCase) >= 0) { target = w; break; }
-        }
-      }
-      IntPtr h = target.Hwnd;
-      if (IsIconic(h)) ShowWindow(h, 9); // SW_RESTORE
+    public static int Focus(uint ownerPid, ulong hwndValue) {
+      IntPtr h = new IntPtr(unchecked((long)hwndValue));
+      if (h == IntPtr.Zero || !IsWindow(h) || !IsWindowVisible(h) || GetAncestor(h, GA_ROOT) != h) return 2;
+      uint pid;
+      GetWindowThreadProcessId(h, out pid);
+      if (pid != ownerPid) return 2;
+      if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
       if (GetForegroundWindow() == h) return 0;
       // Windows only lets the process that owns the foreground input switch it:
       // share the input state of the foreground thread for the switch.
@@ -120,7 +142,7 @@ namespace HuddleWindow {
     }
     if ($ids.Count -eq 0 -or $ids.Count -gt 64) { exit 1 }
     $rows = @(foreach ($w in [HuddleWindow.Native]::List($ids.ToArray())) {
-      [pscustomobject]@{ pid = [long]$w.Pid; hwnd = $w.HwndText; title = $w.Title }
+      [pscustomobject]@{ pid = [long]$w.Pid; hwnd = $w.HwndText; title = $w.Title; normal = $w.Normal }
     })
     $json = ConvertTo-Json -InputObject $rows -Compress
     # ASCII only, so the console code page cannot change a title.
@@ -131,10 +153,12 @@ namespace HuddleWindow {
   if ($req.mode -eq 'focus') {
     $ownerPid = $req.ownerPid
     if (-not (Test-Pid $ownerPid)) { exit 1 }
-    $folder = $req.folderName
-    if ($null -eq $folder) { $folder = '' }
-    if (-not ($folder -is [string]) -or $folder.Length -gt 260) { exit 1 }
-    exit ([HuddleWindow.Native]::Focus([uint32]$ownerPid, $folder))
+    $hwnd = $req.hwnd
+    if (-not ($hwnd -is [string]) -or $hwnd -cnotmatch '^[0-9]{1,20}\z') { exit 1 }
+    $value = [uint64]0
+    if (-not [uint64]::TryParse($hwnd, [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value)) { exit 1 }
+    if ($value -eq 0) { exit 1 }
+    exit ([HuddleWindow.Native]::Focus([uint32]$ownerPid, $value))
   }
 
   exit 1

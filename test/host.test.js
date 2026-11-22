@@ -11,18 +11,21 @@ const {
   loadProcessTable,
 } = require('../src/main/host');
 
-// claude.exe -> pwsh.exe -> Zed.exe -> explorer.exe, as recon showed on this machine.
+// claude.exe -> pwsh.exe -> Zed.exe -> explorer.exe, as recon showed on this
+// machine. start is the creation time in FILETIME ticks: parents start first.
 const TABLE = [
-  { pid: 4, ppid: 0, name: 'System' },
-  { pid: 900, ppid: 4, name: 'smss.exe' },
-  { pid: 1000, ppid: 900, name: 'explorer.exe' },
-  { pid: 2000, ppid: 1000, name: 'Zed.exe' },
-  { pid: 3000, ppid: 2000, name: 'pwsh.exe' },
-  { pid: 4000, ppid: 3000, name: 'claude.exe' },
-  { pid: 5000, ppid: 3000, name: 'node.exe' },
-  { pid: 6000, ppid: 1000, name: 'chrome.exe' },
-  { pid: 6100, ppid: 6000, name: 'chrome.exe' },
+  { pid: 4, ppid: 0, name: 'System', start: 1 },
+  { pid: 900, ppid: 4, name: 'smss.exe', start: 10 },
+  { pid: 1000, ppid: 900, name: 'explorer.exe', start: 100 },
+  { pid: 2000, ppid: 1000, name: 'Zed.exe', start: 200 },
+  { pid: 3000, ppid: 2000, name: 'pwsh.exe', start: 300 },
+  { pid: 4000, ppid: 3000, name: 'claude.exe', start: 400000 },
+  { pid: 5000, ppid: 3000, name: 'node.exe', start: 500000 },
+  { pid: 6000, ppid: 1000, name: 'chrome.exe', start: 600 },
+  { pid: 6100, ppid: 6000, name: 'chrome.exe', start: 610 },
 ];
+const CLAUDE = '400000';
+const NODE = '500000';
 
 // --- friendlyName ---
 
@@ -94,8 +97,8 @@ test('walkAncestors follows the chain upward and stops before pid 4', () => {
 
 test('walkAncestors stops at a missing parent', () => {
   const t = [
-    { pid: 10, ppid: 20, name: 'a.exe' },
-    { pid: 20, ppid: 31337, name: 'b.exe' },
+    { pid: 10, ppid: 20, name: 'a.exe', start: 50 },
+    { pid: 20, ppid: 31337, name: 'b.exe', start: 40 },
   ];
   assert.deepEqual(walkAncestors(t, 10), [
     { pid: 10, name: 'a.exe' },
@@ -110,26 +113,65 @@ test('walkAncestors gives an empty chain for a pid not in the table', () => {
 });
 
 test('walkAncestors stops on a cycle', () => {
+  // Equal start times keep the order rule out of the way.
   const t = [
-    { pid: 10, ppid: 20, name: 'a.exe' },
-    { pid: 20, ppid: 30, name: 'b.exe' },
-    { pid: 30, ppid: 10, name: 'c.exe' },
+    { pid: 10, ppid: 20, name: 'a.exe', start: 5 },
+    { pid: 20, ppid: 30, name: 'b.exe', start: 5 },
+    { pid: 30, ppid: 10, name: 'c.exe', start: 5 },
   ];
   assert.deepEqual(walkAncestors(t, 10).map((e) => e.pid), [10, 20, 30]);
-  const self = [{ pid: 10, ppid: 10, name: 'a.exe' }];
+  const self = [{ pid: 10, ppid: 10, name: 'a.exe', start: 5 }];
   assert.deepEqual(walkAncestors(self, 10).map((e) => e.pid), [10]);
 });
 
 test('walkAncestors stops at pid 0', () => {
-  const t = [{ pid: 10, ppid: 0, name: 'a.exe' }, { pid: 0, ppid: 0, name: 'Idle' }];
+  const t = [{ pid: 10, ppid: 0, name: 'a.exe', start: 5 }, { pid: 0, ppid: 0, name: 'Idle', start: 1 }];
   assert.deepEqual(walkAncestors(t, 10).map((e) => e.pid), [10]);
 });
 
 test('walkAncestors caps the depth', () => {
   const t = [];
-  for (let i = 1; i <= 40; i++) t.push({ pid: i * 8, ppid: (i + 1) * 8, name: `p${i}.exe` });
+  for (let i = 1; i <= 40; i++) t.push({ pid: i * 8, ppid: (i + 1) * 8, name: `p${i}.exe`, start: 1000 - i });
   assert.equal(walkAncestors(t, 8).length, 16);
   assert.equal(walkAncestors(t, 8, 3).length, 3);
+});
+
+test('walkAncestors ends at a parent that started after its child (a reused pid)', () => {
+  const t = [
+    { pid: 10, ppid: 20, name: 'claude.exe', start: 500 },
+    { pid: 20, ppid: 30, name: 'pwsh.exe', start: 400 },
+    // pid 30 was the host; it died and the pid now belongs to a newer process.
+    { pid: 30, ppid: 1, name: 'chrome.exe', start: 900 },
+  ];
+  assert.deepEqual(walkAncestors(t, 10).map((e) => e.pid), [10, 20]);
+});
+
+test('walkAncestors treats an unknown start time as the end of the chain', () => {
+  const parentUnknown = [
+    { pid: 10, ppid: 20, name: 'claude.exe', start: 500 },
+    { pid: 20, ppid: 30, name: 'pwsh.exe', start: 0 },
+  ];
+  assert.deepEqual(walkAncestors(parentUnknown, 10).map((e) => e.pid), [10]);
+  const parentMissing = [
+    { pid: 10, ppid: 20, name: 'claude.exe', start: 500 },
+    { pid: 20, ppid: 30, name: 'pwsh.exe' },
+  ];
+  assert.deepEqual(walkAncestors(parentMissing, 10).map((e) => e.pid), [10]);
+  const childUnknown = [
+    { pid: 10, ppid: 20, name: 'claude.exe' },
+    { pid: 20, ppid: 30, name: 'pwsh.exe', start: 400 },
+  ];
+  assert.deepEqual(walkAncestors(childUnknown, 10).map((e) => e.pid), [10]);
+});
+
+test('walkAncestors compares real FILETIME values exactly', () => {
+  const t = [
+    { pid: 10, ppid: 20, name: 'claude.exe', start: '134398573554097853' },
+    { pid: 20, ppid: 30, name: 'pwsh.exe', start: '134398573554097852' },
+    { pid: 30, ppid: 40, name: 'Zed.exe', start: '134398573554097854' },
+  ];
+  // 852 <= 853 continues; 854 > 852 ends (beyond float precision).
+  assert.deepEqual(walkAncestors(t, 10).map((e) => e.pid), [10, 20]);
 });
 
 test('walkAncestors tolerates bad input', () => {
@@ -143,25 +185,41 @@ test('walkAncestors tolerates bad input', () => {
 
 test('parseProcessTable keeps only well-formed rows', () => {
   const text = JSON.stringify([
-    { pid: 1, ppid: 0, name: 'a.exe' },
-    { pid: -1, ppid: 0, name: 'neg.exe' },
-    { pid: 2.5, ppid: 0, name: 'frac.exe' },
-    { pid: 3, ppid: 'x', name: 'bad.exe' },
-    { pid: 4, ppid: 0 },
-    { pid: 5, ppid: 1, name: '' },
+    { pid: 1, ppid: 0, name: 'a.exe', start: '134398573554097850' },
+    { pid: -1, ppid: 0, name: 'neg.exe', start: '1' },
+    { pid: 2.5, ppid: 0, name: 'frac.exe', start: '1' },
+    { pid: 3, ppid: 'x', name: 'bad.exe', start: '1' },
+    { pid: 4, ppid: 0, start: '1' },
+    { pid: 5, ppid: 1, name: '', start: '1' },
     null,
     'junk',
-    { pid: 6, ppid: 1, name: 'b.exe', extra: 'ignored' },
+    { pid: 6, ppid: 1, name: 'b.exe', start: '0', extra: 'ignored' },
   ]);
   assert.deepEqual(parseProcessTable(text), [
-    { pid: 1, ppid: 0, name: 'a.exe' },
-    { pid: 6, ppid: 1, name: 'b.exe' },
+    { pid: 1, ppid: 0, name: 'a.exe', start: 134398573554097850n },
+    { pid: 6, ppid: 1, name: 'b.exe', start: 0n },
   ]);
 });
 
+test('parseProcessTable reads a missing or malformed start as unknown (0)', () => {
+  const rows = [
+    { pid: 1, ppid: 0, name: 'a.exe' },
+    { pid: 2, ppid: 0, name: 'b.exe', start: null },
+    { pid: 3, ppid: 0, name: 'c.exe', start: '-5' },
+    { pid: 4, ppid: 0, name: 'd.exe', start: '12x' },
+    { pid: 5, ppid: 0, name: 'e.exe', start: '1'.repeat(21) },
+    { pid: 6, ppid: 0, name: 'f.exe', start: 1.5 },
+    { pid: 7, ppid: 0, name: 'g.exe', start: 77 },
+  ];
+  assert.deepEqual(
+    parseProcessTable(JSON.stringify(rows)).map((r) => r.start),
+    [0n, 0n, 0n, 0n, 0n, 0n, 77n],
+  );
+});
+
 test('parseProcessTable accepts a single object and tolerates garbage', () => {
-  assert.deepEqual(parseProcessTable('{"pid":7,"ppid":1,"name":"x.exe"}'), [
-    { pid: 7, ppid: 1, name: 'x.exe' },
+  assert.deepEqual(parseProcessTable('{"pid":7,"ppid":1,"name":"x.exe","start":"9"}'), [
+    { pid: 7, ppid: 1, name: 'x.exe', start: 9n },
   ]);
   for (const bad of ['', 'not json', '42', 'null', '[1,2', undefined, null, 17]) {
     assert.deepEqual(parseProcessTable(bad), [], String(bad));
@@ -169,8 +227,8 @@ test('parseProcessTable accepts a single object and tolerates garbage', () => {
 });
 
 test('parseProcessTable decodes escaped unicode names', () => {
-  assert.deepEqual(parseProcessTable('[{"pid":8,"ppid":1,"name":"caf\\u00e9.exe"}]'), [
-    { pid: 8, ppid: 1, name: 'caf\u00e9.exe' },
+  assert.deepEqual(parseProcessTable('[{"pid":8,"ppid":1,"name":"caf\\u00e9.exe","start":"3"}]'), [
+    { pid: 8, ppid: 1, name: 'caf\u00e9.exe', start: 3n },
   ]);
 });
 
@@ -178,19 +236,20 @@ test('loadProcessTable passes no data and parses the output', async () => {
   const calls = [];
   const run = async (script, input, opts) => {
     calls.push({ script, input, opts });
-    return { code: 0, stdout: '[{"pid":1,"ppid":0,"name":"a.exe"}]\r\n' };
+    return { code: 0, stdout: '[{"pid":1,"ppid":0,"name":"a.exe","start":"5"}]\r\n' };
   };
-  assert.deepEqual(await loadProcessTable({ run }), [{ pid: 1, ppid: 0, name: 'a.exe' }]);
+  assert.deepEqual(await loadProcessTable({ run }), [{ pid: 1, ppid: 0, name: 'a.exe', start: 5n }]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].input, undefined);
   assert.equal(calls[0].opts.timeoutMs, 5000);
   assert.match(calls[0].script, /Get-CimInstance/);
+  assert.match(calls[0].script, /CreationDate/);
 });
 
 test('loadProcessTable gives an empty table on any failure', async () => {
   const runs = [
     async () => null,
-    async () => ({ code: 1, stdout: '[{"pid":1,"ppid":0,"name":"a.exe"}]' }),
+    async () => ({ code: 1, stdout: '[{"pid":1,"ppid":0,"name":"a.exe","start":"5"}]' }),
     async () => { throw new Error('spawn failed'); },
     () => { throw new Error('sync throw'); },
   ];
@@ -221,7 +280,7 @@ function fakeResolver({ table = TABLE, windows = [2000], ttlMs = 5000 } = {}) {
 
 test('resolve finds the first ancestor with a visible window', async () => {
   const { resolver, state } = fakeResolver();
-  assert.deepEqual(await resolver.resolve(4000, 'k1'), { name: 'Zed', ownerPid: 2000 });
+  assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
   // The claude process itself is never asked for; the walk stops before explorer.
   assert.deepEqual(state.checks, [[3000, 2000]]);
 });
@@ -229,119 +288,196 @@ test('resolve finds the first ancestor with a visible window', async () => {
 test('five concurrent resolves share one table load', async () => {
   const { resolver, state } = fakeResolver();
   const results = await Promise.all([
-    resolver.resolve(4000, 'k1'),
-    resolver.resolve(4000, 'k1'),
-    resolver.resolve(5000, 'k5'),
-    resolver.resolve(4000, 'k2'),
-    resolver.resolve(12345, 'k3'),
+    resolver.resolve(4000, CLAUDE),
+    resolver.resolve(4000, CLAUDE),
+    resolver.resolve(5000, NODE),
+    resolver.resolve(4000, CLAUDE, { revalidate: true }),
+    resolver.resolve(12345, '1'),
   ]);
   assert.equal(state.loads, 1);
   assert.deepEqual(results[0], { name: 'Zed', ownerPid: 2000 });
   assert.deepEqual(results[1], { name: 'Zed', ownerPid: 2000 });
   assert.deepEqual(results[2], { name: 'Zed', ownerPid: 2000 });
+  assert.deepEqual(results[3], { name: 'Zed', ownerPid: 2000 });
   assert.equal(results[4], null);
 });
 
-test('the table is reloaded once the ttl has passed', async () => {
+test('a cache miss after the ttl loads a new table', async () => {
   const { resolver, state } = fakeResolver({ ttlMs: 5000 });
-  await resolver.resolve(4000, 'k1');
+  await resolver.resolve(4000, CLAUDE);
   state.t += 4999;
-  await resolver.resolve(4000, 'k1');
+  await resolver.resolve(5000, NODE);
   assert.equal(state.loads, 1);
   state.t += 1;
-  await resolver.resolve(4000, 'k1');
+  await resolver.resolve(4000, '400001');
   assert.equal(state.loads, 2);
 });
 
-test('a cached owner is served without a new window check', async () => {
+test('cached hits are served without any table load or window check', async () => {
   const { resolver, state } = fakeResolver();
-  await resolver.resolve(4000, 'k1');
-  state.t += 10000;
-  assert.deepEqual(await resolver.resolve(4000, 'k1'), { name: 'Zed', ownerPid: 2000 });
+  await resolver.resolve(4000, CLAUDE);
+  assert.equal(state.loads, 1);
+  state.t += 60000;
+  const results = await Promise.all([1, 2, 3, 4, 5].map(() => resolver.resolve(4000, CLAUDE)));
+  for (const r of results) assert.deepEqual(r, { name: 'Zed', ownerPid: 2000 });
+  assert.equal(state.loads, 1);
   assert.equal(state.checks.length, 1);
+});
+
+test('revalidate loads the table at most once, shared, and keeps a still-valid owner', async () => {
+  const { resolver, state } = fakeResolver();
+  await resolver.resolve(4000, CLAUDE);
+  state.t += 60000;
+  const results = await Promise.all(
+    [1, 2, 3, 4, 5].map(() => resolver.resolve(4000, CLAUDE, { revalidate: true })),
+  );
+  for (const r of results) assert.deepEqual(r, { name: 'Zed', ownerPid: 2000 });
+  assert.equal(state.loads, 2);
+  assert.equal(state.checks.length, 1);
+  // Within the ttl the shared table is reused.
+  await resolver.resolve(4000, CLAUDE, { revalidate: true });
+  assert.equal(state.loads, 2);
 });
 
 test('a reused pid with a different startKey is not served from the cache', async () => {
   let table = TABLE;
   let windows = [2000];
   const { resolver, state } = fakeResolver({ table: () => table, windows: () => windows });
-  assert.deepEqual(await resolver.resolve(4000, 'old'), { name: 'Zed', ownerPid: 2000 });
+  assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
   // pid 4000 now belongs to a new claude under VS Code.
   table = [
-    { pid: 7000, ppid: 1000, name: 'Code.exe' },
-    { pid: 7100, ppid: 7000, name: 'pwsh.exe' },
-    { pid: 4000, ppid: 7100, name: 'claude.exe' },
-    { pid: 1000, ppid: 4, name: 'explorer.exe' },
+    { pid: 1000, ppid: 4, name: 'explorer.exe', start: 100 },
+    { pid: 7000, ppid: 1000, name: 'Code.exe', start: 700 },
+    { pid: 7100, ppid: 7000, name: 'pwsh.exe', start: 710 },
+    { pid: 4000, ppid: 7100, name: 'claude.exe', start: 900000 },
   ];
   windows = [7000];
   state.t += 10000;
-  assert.deepEqual(await resolver.resolve(4000, 'new'), { name: 'VS Code', ownerPid: 7000 });
+  assert.deepEqual(await resolver.resolve(4000, '900000'), { name: 'VS Code', ownerPid: 7000 });
   assert.equal(state.checks.length, 2);
+  // The stale registry key no longer matches the live process on revalidation,
+  // and is then dropped from the cache.
+  assert.equal(await resolver.resolve(4000, CLAUDE, { revalidate: true }), null);
+  assert.equal(await resolver.resolve(4000, CLAUDE), null);
 });
 
-test('a cached owner that is no longer in the chain is looked up again', async () => {
+test('a cached owner that is no longer in the chain is looked up again on revalidation', async () => {
   let table = TABLE;
   let windows = [2000];
   const { resolver, state } = fakeResolver({ table: () => table, windows: () => windows });
-  await resolver.resolve(4000, 'k1');
-  // Same key, but the parent chain changed (the old host is gone).
+  await resolver.resolve(4000, CLAUDE);
+  // Same process, but the old host is gone.
   table = [
-    { pid: 4000, ppid: 3000, name: 'claude.exe' },
-    { pid: 3000, ppid: 8000, name: 'pwsh.exe' },
+    { pid: 4000, ppid: 3000, name: 'claude.exe', start: 400000 },
+    { pid: 3000, ppid: 8000, name: 'pwsh.exe', start: 300 },
   ];
   windows = [];
   state.t += 10000;
-  assert.equal(await resolver.resolve(4000, 'k1'), null);
+  assert.equal(await resolver.resolve(4000, CLAUDE, { revalidate: true }), null);
   assert.equal(state.checks.length, 2);
+});
+
+test('the registry start must match the live process within 1 ms', async () => {
+  const table = [
+    { pid: 3000, ppid: 2000, name: 'pwsh.exe', start: '134398573000000000' },
+    { pid: 2000, ppid: 1000, name: 'Zed.exe', start: '134398572000000000' },
+    { pid: 1000, ppid: 4, name: 'explorer.exe', start: '134398571000000000' },
+    { pid: 4000, ppid: 3000, name: 'claude.exe', start: '134398573554097850' },
+  ];
+  const ok = ['134398573554097853', '134398573554097850', '134398573554107850', '134398573554087850'];
+  for (const startKey of ok) {
+    const { resolver } = fakeResolver({ table });
+    assert.deepEqual(await resolver.resolve(4000, startKey), { name: 'Zed', ownerPid: 2000 }, startKey);
+  }
+  const bad = ['134398573554107851', '134398573554087849', '134398573654097850'];
+  for (const startKey of bad) {
+    const { resolver, state } = fakeResolver({ table });
+    assert.equal(await resolver.resolve(4000, startKey), null, startKey);
+    assert.equal(state.checks.length, 0);
+  }
+});
+
+test('a live process with an unknown start never resolves', async () => {
+  const table = TABLE.map((r) => (r.pid === 4000 ? { ...r, start: 0 } : r));
+  const { resolver, state } = fakeResolver({ table });
+  assert.equal(await resolver.resolve(4000, '0'), null);
+  assert.equal(await resolver.resolve(4000, CLAUDE), null);
+  assert.equal(state.checks.length, 0);
+});
+
+test('a missing or malformed startKey gives null without loading', async () => {
+  const { resolver, state } = fakeResolver();
+  for (const startKey of [undefined, null, '', '0', 'abc', '-400000', '4e5', ' 400000', 1.5, {}, '1'.repeat(21)]) {
+    assert.equal(await resolver.resolve(4000, startKey), null, String(startKey));
+  }
+  assert.equal(state.loads, 0);
+});
+
+test('a numeric startKey works like its decimal string', async () => {
+  const { resolver } = fakeResolver();
+  assert.deepEqual(await resolver.resolve(4000, 400000), { name: 'Zed', ownerPid: 2000 });
 });
 
 test('a dead pid gives null', async () => {
   const { resolver, state } = fakeResolver();
-  assert.equal(await resolver.resolve(12345, 'k'), null);
+  assert.equal(await resolver.resolve(12345, CLAUDE), null);
   assert.equal(state.checks.length, 0);
 });
 
 test('a pid that is not a claude or node process gives null (pid reuse)', async () => {
   const { resolver, state } = fakeResolver({ windows: [6000] });
   // 6100 is a chrome child whose parent owns windows: never a host.
-  assert.equal(await resolver.resolve(6100, 'k'), null);
+  assert.equal(await resolver.resolve(6100, '610'), null);
   assert.equal(state.checks.length, 0);
 });
 
 test('claude and node ancestors are skipped as owners', async () => {
   const table = [
-    { pid: 1000, ppid: 4, name: 'explorer.exe' },
-    { pid: 2000, ppid: 1000, name: 'WindowsTerminal.exe' },
-    { pid: 2100, ppid: 2000, name: 'node.exe' },
-    { pid: 2200, ppid: 2100, name: 'Claude.exe' },
-    { pid: 2300, ppid: 2200, name: 'cmd.exe' },
-    { pid: 2400, ppid: 2300, name: 'claude.exe' },
+    { pid: 1000, ppid: 4, name: 'explorer.exe', start: 100 },
+    { pid: 2000, ppid: 1000, name: 'WindowsTerminal.exe', start: 200 },
+    { pid: 2100, ppid: 2000, name: 'node.exe', start: 210 },
+    { pid: 2200, ppid: 2100, name: 'Claude.exe', start: 220 },
+    { pid: 2300, ppid: 2200, name: 'cmd.exe', start: 230 },
+    { pid: 2400, ppid: 2300, name: 'claude.exe', start: 240 },
   ];
   // Every process "owns" a window: only the terminal may win.
   const { resolver, state } = fakeResolver({ table, windows: [2000, 2100, 2200, 2300, 2400] });
-  assert.deepEqual(await resolver.resolve(2400, 'k'), { name: 'Terminal', ownerPid: 2300 });
+  assert.deepEqual(await resolver.resolve(2400, '240'), { name: 'Terminal', ownerPid: 2300 });
   assert.deepEqual(state.checks, [[2300, 2000]]);
 });
 
 test('the walk never reaches past explorer to a random window', async () => {
   const table = [
-    { pid: 1000, ppid: 4, name: 'explorer.exe' },
-    { pid: 4000, ppid: 1000, name: 'claude.exe' },
+    { pid: 1000, ppid: 4, name: 'explorer.exe', start: 100 },
+    { pid: 4000, ppid: 1000, name: 'claude.exe', start: 400000 },
   ];
   const { resolver, state } = fakeResolver({ table, windows: [1000] });
-  assert.equal(await resolver.resolve(4000, 'k'), null);
+  assert.equal(await resolver.resolve(4000, CLAUDE), null);
   assert.equal(state.checks.length, 0);
+});
+
+test('a reused parent pid is never taken as the host', async () => {
+  const table = [
+    { pid: 4000, ppid: 3000, name: 'claude.exe', start: 400000 },
+    { pid: 3000, ppid: 2000, name: 'pwsh.exe', start: 300 },
+    // The real host (pid 2000) is gone; a newer windowed process got its pid.
+    { pid: 2000, ppid: 1000, name: 'chrome.exe', start: 999999 },
+  ];
+  const { resolver, state } = fakeResolver({ table, windows: [2000] });
+  assert.equal(await resolver.resolve(4000, CLAUDE), null);
+  assert.deepEqual(state.checks, [[3000]]);
 });
 
 test('no ancestor with a window gives null and is retried after the ttl', async () => {
   let windows = [];
   const { resolver, state } = fakeResolver({ windows: () => windows });
-  assert.equal(await resolver.resolve(4000, 'k'), null);
-  assert.equal(await resolver.resolve(4000, 'k'), null);
+  assert.equal(await resolver.resolve(4000, CLAUDE), null);
+  assert.equal(await resolver.resolve(4000, CLAUDE), null);
   assert.equal(state.checks.length, 1);
+  assert.equal(state.loads, 1);
   windows = [2000];
   state.t += 5000;
-  assert.deepEqual(await resolver.resolve(4000, 'k'), { name: 'Zed', ownerPid: 2000 });
+  assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
 });
 
 test('loader and window check failures give null, never throw', async () => {
@@ -356,8 +492,11 @@ test('loader and window check failures give null, never throw', async () => {
   ];
   for (const deps of cases) {
     const resolver = createHostResolver({ ...deps, now: () => 0 });
-    assert.equal(await resolver.resolve(4000, 'k'), null);
+    assert.equal(await resolver.resolve(4000, CLAUDE), null);
+    assert.equal(await resolver.resolve(4000, CLAUDE, { revalidate: true }), null);
   }
+  const resolver = createHostResolver({ loadTable: async () => TABLE, hasVisibleWindow: async () => new Map() });
+  assert.equal(await resolver.resolve(4000, CLAUDE, null), null);
 });
 
 test('an owner listed with no windows does not count', async () => {
@@ -366,13 +505,13 @@ test('an owner listed with no windows does not count', async () => {
     hasVisibleWindow: async () => new Map([[3000, []], [2000, [{ hwnd: '1', title: 'x' }]]]),
     now: () => 0,
   });
-  assert.deepEqual(await resolver.resolve(4000, 'k'), { name: 'Zed', ownerPid: 2000 });
+  assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
 });
 
 test('resolve rejects invalid pids without loading anything', async () => {
   const { resolver, state } = fakeResolver();
   for (const pid of [undefined, null, '4000', 0, -4, 1.5, NaN, Infinity, 2 ** 32, Number.MAX_SAFE_INTEGER + 2]) {
-    assert.equal(await resolver.resolve(pid, 'k'), null, String(pid));
+    assert.equal(await resolver.resolve(pid, CLAUDE), null, String(pid));
   }
   assert.equal(state.loads, 0);
 });
