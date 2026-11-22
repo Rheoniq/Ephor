@@ -134,30 +134,61 @@ function sameStart(a, b) {
   return d <= START_TOLERANCE;
 }
 
-// resolve(pid, startKey, { revalidate }) -> { name, ownerPid } | null.
+// What one process table says about a registry entry: 'live' (the pid is a
+// claude or node process that started at `start`, within 1 ms), 'stale'
+// (definitely not: the pid is missing, belongs to another program, or started
+// at another time) or 'unknown' (the pid's start time is not known).
+function judgeEntry(index, pid, start) {
+  const self = index.get(pid);
+  if (!self || !SESSION_PROCESSES.has(lower(self.name))) return 'stale';
+  if (self.start === 0n) return 'unknown';
+  return sameStart(self.start, start) ? 'live' : 'stale';
+}
+
+const NO_ANSWER = Object.freeze({ host: null, stale: false });
+const STALE = Object.freeze({ host: null, stale: true });
+
+// lookup(pid, startKey, { revalidate }) -> { host: { name, ownerPid } | null,
+// stale: boolean }. stale is true only when a loaded process table proves that
+// the registry entry no longer describes a live session (judgeEntry); a failed
+// table load, a failed window check, an unknown start time, bad input or a
+// live session without a host give { host: null, stale: false }.
+// resolve(pid, startKey, { revalidate }) -> { name, ownerPid } | null is
+// lookup's host alone (the older API).
 // startKey is the registry's procStart (FILETIME ticks); without it there is no
 // answer. A cache hit is served at once, with no table load: the refresh path
 // stays free. A miss, or revalidate: true (the click path), uses the shared
-// process table (at most one load per ttlMs) and checks that the pid's start
-// matches startKey within 1 ms and, for a cached owner, that it is still in the
-// chain. hasVisibleWindow(pids) answers for all candidates in one call
-// (windowsOf). "No owner" is remembered for ttlMs. Never rejects.
+// process table (at most one load per ttlMs; a failed load is remembered as a
+// failure for that long and never clears a cache entry) and checks that the
+// pid's start matches startKey and, for a cached owner, that it is still in the
+// chain. A stale verdict from a table read before the lookup began is checked
+// once more on a table read since, so a session that started after the last
+// read is never called stale. hasVisibleWindow(pids) answers for all candidates
+// in one call (windowsOf). "No owner" is remembered for ttlMs. Never rejects.
 function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs = DEFAULT_TTL_MS } = {}) {
-  let table = null; // { at, promise -> Map | null }
+  let table = null; // { at, promise -> Map | null (a failed load) }
   const cache = new Map(); // key -> { ownerPid, exe, name } | { none: true, until }
   const inflight = new Map();
 
-  function snapshot() {
+  // The shared table, read again when it is older than ttlMs or was read
+  // before notBefore.
+  function snapshot(notBefore = -Infinity) {
     const t = now();
-    if (!table || t - table.at >= ttlMs || t < table.at) {
+    const usable = table && t >= table.at && t - table.at < ttlMs && table.at >= notBefore;
+    if (!usable) {
       table = {
         at: t,
         promise: Promise.resolve()
           .then(() => loadTable())
-          .then((rows) => indexTable(rows), () => null),
+          .then((rows) => {
+            if (!Array.isArray(rows)) return null;
+            const index = indexTable(rows);
+            // A live system always has processes: an empty table is a failed read.
+            return index.size > 0 ? index : null;
+          }, () => null),
       };
     }
-    return table.promise;
+    return table;
   }
 
   function remember(key, value) {
@@ -167,26 +198,36 @@ function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs
   }
 
   async function compute(pid, start, key) {
-    const index = await snapshot();
-    if (!index) return null;
-    const self = index.get(pid);
-    if (!self || !sameStart(self.start, start)) {
-      // The registry entry does not describe the live process (anymore).
+    const began = now();
+    let snap = snapshot();
+    let index = await snap.promise;
+    if (!index) return NO_ANSWER;
+    let verdict = judgeEntry(index, pid, start);
+    if (verdict === 'stale' && snap.at < began) {
+      // That table may predate the process: only a table read since counts.
+      snap = snapshot(began);
+      index = await snap.promise;
+      if (!index) return NO_ANSWER;
+      verdict = judgeEntry(index, pid, start);
+    }
+    if (verdict !== 'live') {
+      // The registry entry does not describe the live process (anymore), or
+      // that cannot be told.
       cache.delete(key);
-      return null;
+      return verdict === 'stale' ? STALE : NO_ANSWER;
     }
     const candidates = hostCandidates(walkAncestors(index, pid));
     if (candidates.length === 0) {
       cache.delete(key);
-      return null;
+      return NO_ANSWER;
     }
     const cached = cache.get(key);
     if (cached && !cached.none) {
       const still = candidates.some((c) => c.pid === cached.ownerPid && lower(c.name) === cached.exe);
-      if (still) return { name: cached.name, ownerPid: cached.ownerPid };
+      if (still) return { host: { name: cached.name, ownerPid: cached.ownerPid }, stale: false };
       cache.delete(key);
     } else if (cached && cached.none && now() < cached.until) {
-      return null;
+      return NO_ANSWER;
     }
     let found = null;
     try {
@@ -197,53 +238,65 @@ function createHostResolver({ loadTable, hasVisibleWindow, now = Date.now, ttlMs
     const owner = candidates.find((c) => ownsWindow(found, c.pid));
     if (!owner) {
       remember(key, { none: true, until: now() + ttlMs });
-      return null;
+      return NO_ANSWER;
     }
-    const result = { name: friendlyName(owner.name), ownerPid: owner.pid };
-    remember(key, { ownerPid: owner.pid, exe: lower(owner.name), name: result.name });
-    return result;
+    const host = { name: friendlyName(owner.name), ownerPid: owner.pid };
+    remember(key, { ownerPid: owner.pid, exe: lower(owner.name), name: host.name });
+    return { host, stale: false };
   }
 
-  function resolve(pid, startKey, options) {
+  function lookup(pid, startKey, options) {
     try {
-      if (!isValidPid(pid)) return Promise.resolve(null);
+      if (!isValidPid(pid)) return Promise.resolve(NO_ANSWER);
       const start = toTicks(startKey);
-      if (start === 0n) return Promise.resolve(null);
+      if (start === 0n) return Promise.resolve(NO_ANSWER);
       const revalidate = Boolean(options && options.revalidate);
       const key = `${pid}|${start}`;
       if (!revalidate) {
         const cached = cache.get(key);
-        if (cached && !cached.none) return Promise.resolve({ name: cached.name, ownerPid: cached.ownerPid });
-        if (cached && cached.none && now() < cached.until) return Promise.resolve(null);
+        if (cached && !cached.none) {
+          return Promise.resolve({ host: { name: cached.name, ownerPid: cached.ownerPid }, stale: false });
+        }
+        if (cached && cached.none && now() < cached.until) return Promise.resolve(NO_ANSWER);
       }
       const flight = `${key}|${revalidate ? 'check' : 'miss'}`;
       const pending = inflight.get(flight);
       if (pending) return pending;
       const p = compute(pid, start, key)
-        .catch(() => null)
+        .catch(() => NO_ANSWER)
         .finally(() => inflight.delete(flight));
       inflight.set(flight, p);
       return p;
     } catch {
-      return Promise.resolve(null);
+      return Promise.resolve(NO_ANSWER);
     }
   }
 
-  return { resolve };
+  function resolve(pid, startKey, options) {
+    return lookup(pid, startKey, options).then((r) => (r && r.host ? { ...r.host } : null));
+  }
+
+  return { resolve, lookup };
 }
 
 // Rows of the process table script, only well-formed ones; start is FILETIME
 // ticks as a BigInt, 0n when missing or malformed. Tolerates garbage.
 function parseProcessTable(text) {
-  if (typeof text !== 'string') return [];
+  return readRows(text) || [];
+}
+
+// Like parseProcessTable, but null when the text is not JSON or holds
+// neither a list nor a single row.
+function readRows(text) {
+  if (typeof text !== 'string') return null;
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    return [];
+    return null;
   }
   if (data && typeof data === 'object' && !Array.isArray(data)) data = [data];
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data)) return null;
   const out = [];
   for (const row of data) {
     if (!row || typeof row !== 'object') continue;
@@ -269,15 +322,18 @@ $json = ConvertTo-Json -InputObject $rows -Compress
 `;
 
 // The process table in one PowerShell call (5 s timeout). Never rejects: any
-// failure gives an empty table.
+// failure gives null, never an empty table, so a failed read cannot pass for
+// "every process is gone". A table with no well-formed row counts as failed
+// too: a live system always has processes.
 async function loadProcessTable(deps = {}) {
   const run = (deps && deps.run) || runPowerShell;
   try {
     const res = await run(PROCESS_TABLE_SCRIPT, undefined, { timeoutMs: LOAD_TABLE_TIMEOUT_MS });
-    if (!res || res.code !== 0) return [];
-    return parseProcessTable(res.stdout);
+    if (!res || res.code !== 0) return null;
+    const rows = readRows(res.stdout);
+    return rows && rows.length > 0 ? rows : null;
   } catch {
-    return [];
+    return null;
   }
 }
 

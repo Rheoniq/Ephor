@@ -44,6 +44,11 @@ function readSessions(dir, isAlive) {
     if (data.kind !== 'interactive') continue;
     // sessionId ends up in a transcript path and in IPC: accept only a UUID.
     if (typeof data.sessionId !== 'string' || !SESSION_ID_RE.test(data.sessionId)) continue;
+    // A pid from another pid domain (WSL, another machine) means nothing
+    // here: an entry that names a domain other than win32 is dropped.
+    if (data.pidDomain !== undefined && !(typeof data.pidDomain === 'string' && data.pidDomain.startsWith('win32'))) {
+      continue;
+    }
     if (!isAlive(data.pid)) continue;
 
     const entrypoint = typeof data.entrypoint === 'string' ? data.entrypoint : '';
@@ -66,7 +71,23 @@ function readSessions(dir, isAlive) {
       entrypoint,
     });
   }
-  return sessions;
+  return newestPerSession(sessions);
+}
+
+function updatedAtOf(session) {
+  return Number.isFinite(session.updatedAt) ? session.updatedAt : -Infinity;
+}
+
+// One entry per session id. A session resumed in a new process can leave its
+// old file behind (after a crash), and that file's pid may have been reused:
+// the entry with the newest updatedAt wins, at the place the id first showed.
+function newestPerSession(sessions) {
+  const byId = new Map();
+  for (const s of sessions) {
+    const prev = byId.get(s.sessionId);
+    if (!prev || updatedAtOf(s) > updatedAtOf(prev)) byId.set(s.sessionId, s);
+  }
+  return [...byId.values()];
 }
 
 module.exports = { readSessions, pidIsAlive };

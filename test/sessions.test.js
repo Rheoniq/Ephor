@@ -180,3 +180,44 @@ test('drops entries whose sessionId is not a UUID', () => {
   const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
   assert.deepEqual(ids, [ID_OK]);
 });
+
+test('keeps one entry per session id: the newest updatedAt wins', () => {
+  // A session resumed in a new process can leave its old file behind.
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, updatedAt: 1700000000000, status: 'busy' }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_A, updatedAt: 1700000005000, status: 'waiting' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_A, updatedAt: 1700000001000, status: 'idle' }));
+  writeJson('1004.json', base({ pid: 1004, sessionId: ID_B }));
+  const sessions = readSessions(dir, allAlive);
+  assert.deepEqual(
+    sessions.map((s) => [s.sessionId, s.pid, s.status]),
+    [
+      [ID_A, 1002, 'waiting'],
+      [ID_B, 1004, 'busy'],
+    ],
+  );
+});
+
+test('a duplicate with a missing or non-numeric updatedAt loses to a numeric one', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, updatedAt: 'later' }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_A, updatedAt: 5 }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_A, updatedAt: undefined }));
+  assert.deepEqual(readSessions(dir, allAlive).map((s) => s.pid), [1002]);
+});
+
+test('a duplicate whose pid is dead does not hide the live one', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, updatedAt: 9 }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_A, updatedAt: 1 }));
+  assert.deepEqual(readSessions(dir, (pid) => pid === 1002).map((s) => s.pid), [1002]);
+});
+
+test('drops entries from another pid domain (WSL or another machine)', () => {
+  writeJson('1001.json', base({ pid: 1001, sessionId: ID_A, pidDomain: 'win32:pc' }));
+  writeJson('1002.json', base({ pid: 1002, sessionId: ID_B, pidDomain: 'linux:wsl' }));
+  writeJson('1003.json', base({ pid: 1003, sessionId: ID_C }));
+  writeJson('1004.json', base({ pid: 1004, sessionId: ID_KEY, pidDomain: 'win32' }));
+  writeJson('1005.json', base({ pid: 1005, sessionId: ID_TXT, pidDomain: 42 }));
+  writeJson('1006.json', base({ pid: 1006, sessionId: ID_OK, pidDomain: null }));
+  writeJson('1007.json', base({ pid: 1007, sessionId: ID_LIVE, pidDomain: 'darwin:mac' }));
+  const ids = readSessions(dir, allAlive).map((s) => s.sessionId);
+  assert.deepEqual(ids.sort(), [ID_A, ID_C, ID_KEY].sort());
+});

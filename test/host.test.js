@@ -246,15 +246,21 @@ test('loadProcessTable passes no data and parses the output', async () => {
   assert.match(calls[0].script, /CreationDate/);
 });
 
-test('loadProcessTable gives an empty table on any failure', async () => {
+test('loadProcessTable gives null (a failure, not an empty table) on any failure', async () => {
   const runs = [
     async () => null,
     async () => ({ code: 1, stdout: '[{"pid":1,"ppid":0,"name":"a.exe","start":"5"}]' }),
     async () => { throw new Error('spawn failed'); },
     () => { throw new Error('sync throw'); },
+    async () => ({ code: 0, stdout: 'garbage' }),
+    async () => ({ code: 0, stdout: '' }),
+    async () => ({ code: 0, stdout: '42' }),
+    // A live system always has processes: an empty table is a failed read.
+    async () => ({ code: 0, stdout: '[]' }),
+    async () => ({ code: 0, stdout: '[{"pid":-1,"ppid":0,"name":"a.exe"}]' }),
   ];
   for (const run of runs) {
-    assert.deepEqual(await loadProcessTable({ run }), []);
+    assert.equal(await loadProcessTable({ run }), null);
   }
 });
 
@@ -506,6 +512,133 @@ test('an owner listed with no windows does not count', async () => {
     now: () => 0,
   });
   assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
+});
+
+// --- lookup: stale or not ---
+
+const LIVE_ZED = { host: { name: 'Zed', ownerPid: 2000 }, stale: false };
+const NO_ANSWER = { host: null, stale: false };
+const STALE = { host: null, stale: true };
+
+test('lookup gives the host and stale false for a live session', async () => {
+  const { resolver } = fakeResolver();
+  assert.deepEqual(await resolver.lookup(4000, CLAUDE), LIVE_ZED);
+  // Cached hit, revalidate: the same answer.
+  assert.deepEqual(await resolver.lookup(4000, CLAUDE), LIVE_ZED);
+  assert.deepEqual(await resolver.lookup(4000, CLAUDE, { revalidate: true }), LIVE_ZED);
+});
+
+test('lookup reports stale when the pid is missing from a loaded table', async () => {
+  const { resolver, state } = fakeResolver();
+  assert.deepEqual(await resolver.lookup(12345, CLAUDE), STALE);
+  assert.equal(state.checks.length, 0);
+  assert.equal(await resolver.resolve(12345, CLAUDE), null);
+});
+
+test('lookup reports stale when the start time does not match within 1 ms', async () => {
+  const { resolver } = fakeResolver();
+  assert.deepEqual(await resolver.lookup(4000, '410001'), STALE);
+  assert.deepEqual(await resolver.lookup(4000, '389999'), STALE);
+  // Within 1 ms is the same process.
+  assert.deepEqual(await resolver.lookup(4000, '410000'), LIVE_ZED);
+});
+
+test('lookup reports stale when the pid is not a claude or node process', async () => {
+  const { resolver } = fakeResolver({ windows: [6000] });
+  assert.deepEqual(await resolver.lookup(6100, '610'), STALE);
+  // Whatever its start time says.
+  const unknown = TABLE.map((r) => (r.pid === 6100 ? { ...r, start: 0 } : r));
+  const other = fakeResolver({ table: unknown, windows: [6000] });
+  assert.deepEqual(await other.resolver.lookup(6100, '610'), STALE);
+});
+
+test('lookup is never stale on a failed load, a failed window check or an unknown start', async () => {
+  const failures = [
+    { loadTable: async () => { throw new Error('x'); }, hasVisibleWindow: async () => new Map() },
+    { loadTable: () => { throw new Error('sync'); }, hasVisibleWindow: async () => new Map() },
+    { loadTable: async () => null, hasVisibleWindow: async () => new Map() },
+    { loadTable: async () => 'garbage', hasVisibleWindow: async () => new Map() },
+    { loadTable: async () => [], hasVisibleWindow: async () => new Map() },
+    { loadTable: async () => TABLE, hasVisibleWindow: async () => { throw new Error('x'); } },
+    { loadTable: async () => TABLE, hasVisibleWindow: async () => null },
+    { loadTable: async () => TABLE.map((r) => (r.pid === 4000 ? { ...r, start: 0 } : r)), hasVisibleWindow: async () => new Map([[2000, [1]]]) },
+  ];
+  for (const deps of failures) {
+    const resolver = createHostResolver({ ...deps, now: () => 0 });
+    assert.deepEqual(await resolver.lookup(4000, CLAUDE), NO_ANSWER);
+    assert.deepEqual(await resolver.lookup(4000, CLAUDE, { revalidate: true }), NO_ANSWER);
+  }
+});
+
+test('lookup is not stale for a live session without a host', async () => {
+  // No ancestor owns a window.
+  const none = fakeResolver({ windows: [] });
+  assert.deepEqual(await none.resolver.lookup(4000, CLAUDE), NO_ANSWER);
+  // Remembered "no owner": still not stale.
+  assert.deepEqual(await none.resolver.lookup(4000, CLAUDE), NO_ANSWER);
+  // Nothing but explorer above the session.
+  const table = [
+    { pid: 1000, ppid: 4, name: 'explorer.exe', start: 100 },
+    { pid: 4000, ppid: 1000, name: 'claude.exe', start: 400000 },
+  ];
+  const bare = fakeResolver({ table, windows: [1000] });
+  assert.deepEqual(await bare.resolver.lookup(4000, CLAUDE), NO_ANSWER);
+});
+
+test('lookup is not stale for a missing or malformed startKey or an invalid pid', async () => {
+  const { resolver, state } = fakeResolver();
+  for (const startKey of [undefined, null, '', '0', 'abc']) {
+    assert.deepEqual(await resolver.lookup(4000, startKey), NO_ANSWER, String(startKey));
+  }
+  for (const pid of [undefined, '4000', 0, -4, 1.5]) {
+    assert.deepEqual(await resolver.lookup(pid, CLAUDE), NO_ANSWER, String(pid));
+  }
+  assert.equal(state.loads, 0);
+});
+
+test('a stale verdict from a table read before the lookup began is checked on a fresh table', async () => {
+  let table = TABLE.filter((r) => r.pid !== 5000);
+  const { resolver, state } = fakeResolver({ table: () => table });
+  await resolver.resolve(4000, CLAUDE);
+  assert.equal(state.loads, 1);
+  // The node session started after that table was read.
+  table = TABLE;
+  state.t += 1000;
+  assert.deepEqual(await resolver.lookup(5000, NODE), LIVE_ZED);
+  assert.equal(state.loads, 2);
+  // Gone from the fresh table too: stale, after exactly one more load.
+  state.t += 1000;
+  assert.deepEqual(await resolver.lookup(7777, '1'), STALE);
+  assert.equal(state.loads, 3);
+  // Within the same moment the table just read is used as it is.
+  assert.deepEqual(await resolver.lookup(7778, '1'), STALE);
+  assert.equal(state.loads, 3);
+});
+
+test('a failed load keeps good cache entries and is remembered as a failure for at most the ttl', async () => {
+  let fail = false;
+  const { resolver, state } = fakeResolver({
+    table: () => {
+      if (fail) throw new Error('wmi down');
+      return TABLE;
+    },
+  });
+  assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
+  fail = true;
+  state.t += 10000;
+  assert.deepEqual(await resolver.lookup(4000, CLAUDE, { revalidate: true }), NO_ANSWER);
+  assert.equal(state.loads, 2);
+  // The good entry survives the failed load: served at once, no load.
+  assert.deepEqual(await resolver.resolve(4000, CLAUDE), { name: 'Zed', ownerPid: 2000 });
+  assert.equal(state.loads, 2);
+  // Within the ttl the failure is reused, never read as an empty table.
+  assert.deepEqual(await resolver.lookup(12345, CLAUDE), NO_ANSWER);
+  assert.equal(state.loads, 2);
+  // After the ttl the table is read again.
+  fail = false;
+  state.t += 5000;
+  assert.deepEqual(await resolver.lookup(4000, CLAUDE, { revalidate: true }), LIVE_ZED);
+  assert.equal(state.loads, 3);
 });
 
 test('resolve rejects invalid pids without loading anything', async () => {
