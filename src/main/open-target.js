@@ -9,8 +9,10 @@ const { findOpenable } = require('./panel');
 // Longest id the open IPC accepts (session ids are UUIDs, hostSessionIds
 // are a short prefix plus an id).
 const MAX_OPEN_ID_LEN = 100;
-// An unresolvable host is asked again only after this long.
-const RETRY_NULL_MS = 60000;
+// An unresolvable host is asked again after 60 s, then after 5 minutes, and
+// then not again until the session's pid or procStart changes.
+const RETRY_DELAYS_MS = Object.freeze([60000, 5 * 60000]);
+const RETRY_NULL_MS = RETRY_DELAYS_MS[0];
 
 function validId(id) {
   return typeof id === 'string' && id !== '' && id.length <= MAX_OPEN_ID_LEN;
@@ -45,53 +47,98 @@ function openSucceeded(result) {
 
 // The host name of each shown terminal session, looked up lazily and off the
 // refresh path. hostFor(session) answers at once from what is known (a name,
-// or null) and, when nothing is known or a null result is older than
-// RETRY_NULL_MS, starts one resolve(pid, procStart, { revalidate: false }).
-// procStart goes through unchanged (FILETIME strings exceed safe integers).
+// or null) and, when nothing is known or a retry is due, starts one lookup
+// with { revalidate: false }. procStart goes through unchanged (FILETIME
+// strings exceed safe integers).
+// Deps: lookup(pid, procStart, options) -> { host: { name } | null, stale }
+// (host.js createHostResolver().lookup), or the older resolve(pid, procStart,
+// options) -> { name } | null, which never reports stale.
 // A landed name calls onResolved() so main refreshes; the snapshot gate drops
-// a refresh that changes nothing. Entries are per session id and are started
-// over when the session's pid or procStart changes. Never throws.
-function createHostLookups({ resolve, now = Date.now, onResolved, retryMs = RETRY_NULL_MS } = {}) {
-  const entries = new Map(); // sessionId -> { ident, state, name, until }
+// a refresh that changes nothing. A lookup with no host is retried after
+// retryDelays[0] (60 s), then retryDelays[1] (5 min), then not again. A stale
+// verdict (the registry entry no longer describes a live session, see
+// host.js) marks the session stale for isStale(), calls onResolved() so main
+// drops it on the next refresh, and stops the lookups. Entries are per
+// session id and start over, backoff and stale mark included, when the
+// session's pid or procStart changes. Never throws.
+function createHostLookups({
+  resolve,
+  lookup,
+  now = Date.now,
+  onResolved,
+  retryDelays = RETRY_DELAYS_MS,
+} = {}) {
+  const entries = new Map(); // sessionId -> { ident, state, name, until, misses }
 
-  function start(session, ident) {
-    const entry = { ident, state: 'pending', name: null, until: 0 };
+  function ask(session) {
+    if (typeof lookup === 'function') return lookup(session.pid, session.procStart, { revalidate: false });
+    return Promise.resolve(resolve(session.pid, session.procStart, { revalidate: false })).then((host) => ({
+      host,
+      stale: false,
+    }));
+  }
+
+  function notify(sessionId) {
+    if (typeof onResolved !== 'function') return;
+    try {
+      onResolved(sessionId);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function start(session, ident, misses) {
+    const entry = { ident, state: 'pending', name: null, until: 0, misses };
     entries.set(session.sessionId, entry);
     let p;
     try {
-      p = Promise.resolve(resolve(session.pid, session.procStart, { revalidate: false }));
+      p = Promise.resolve(ask(session));
     } catch {
       p = Promise.resolve(null);
     }
     p.catch(() => null).then((res) => {
       // Dropped when the session left or was started over meanwhile.
       if (entries.get(session.sessionId) !== entry) return;
-      const name = res && typeof res.name === 'string' && res.name !== '' ? res.name : null;
+      if (res && res.stale === true) {
+        entry.state = 'stale';
+        notify(session.sessionId);
+        return;
+      }
+      const host = res && res.host;
+      const name = host && typeof host.name === 'string' && host.name !== '' ? host.name : null;
       if (name) {
         entry.state = 'done';
         entry.name = name;
-        if (typeof onResolved === 'function') {
-          try {
-            onResolved(session.sessionId);
-          } catch {
-            /* ignore */
-          }
-        }
-      } else {
+        notify(session.sessionId);
+        return;
+      }
+      entry.misses += 1;
+      if (entry.misses <= retryDelays.length) {
         entry.state = 'none';
-        entry.until = now() + retryMs;
+        entry.until = now() + retryDelays[entry.misses - 1];
+      } else {
+        entry.state = 'off';
       }
     });
   }
 
+  function identOf(session) {
+    if (!session || typeof session !== 'object' || session.source !== 'terminal') return null;
+    if (typeof session.sessionId !== 'string' || session.sessionId === '') return null;
+    return `${session.pid}|${session.procStart}`;
+  }
+
   function hostFor(session) {
     try {
-      if (!session || typeof session !== 'object' || session.source !== 'terminal') return null;
-      if (typeof session.sessionId !== 'string' || session.sessionId === '') return null;
-      const ident = `${session.pid}|${session.procStart}`;
+      const ident = identOf(session);
+      if (ident === null) return null;
       const entry = entries.get(session.sessionId);
-      if (!entry || entry.ident !== ident || (entry.state === 'none' && now() >= entry.until)) {
-        start(session, ident);
+      if (!entry || entry.ident !== ident) {
+        start(session, ident, 0);
+        return null;
+      }
+      if (entry.state === 'none' && now() >= entry.until) {
+        start(session, ident, entry.misses);
         return null;
       }
       return entry.state === 'done' ? entry.name : null;
@@ -100,13 +147,28 @@ function createHostLookups({ resolve, now = Date.now, onResolved, retryMs = RETR
     }
   }
 
-  // Forgets sessions that are not in keptIds.
+  // True when a lookup proved that this session's registry entry (its pid and
+  // procStart as now) no longer describes a live session.
+  function isStale(session) {
+    try {
+      const ident = identOf(session);
+      if (ident === null) return false;
+      const entry = entries.get(session.sessionId);
+      return !!entry && entry.ident === ident && entry.state === 'stale';
+    } catch {
+      return false;
+    }
+  }
+
+  // Forgets sessions that are not in keptIds. Main passes every session read
+  // from the registry, stale ones included, so a stale mark holds while its
+  // file stays.
   function prune(keptIds) {
     const keep = new Set(keptIds);
     for (const id of [...entries.keys()]) if (!keep.has(id)) entries.delete(id);
   }
 
-  return { hostFor, prune };
+  return { hostFor, isStale, prune };
 }
 
 // Guards the arrow against click spam. open(key, ...args) runs
@@ -166,4 +228,5 @@ module.exports = {
   openTerminal,
   MAX_OPEN_ID_LEN,
   RETRY_NULL_MS,
+  RETRY_DELAYS_MS,
 };

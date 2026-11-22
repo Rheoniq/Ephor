@@ -163,11 +163,12 @@ const hostResolver = DEMO
   ? null
   : createHostResolver({ loadTable: () => loadProcessTable(), hasVisibleWindow: (pids) => windowsOf(pids) });
 // Looked up lazily for shown terminal sessions only, never awaited by a
-// refresh; a name that lands asks for one more refresh.
+// refresh; a name that lands, or a verdict that the registry entry is stale,
+// asks for one more refresh.
 const hostLookups = DEMO
   ? null
   : createHostLookups({
-      resolve: (pid, startKey, options) => hostResolver.resolve(pid, startKey, options),
+      lookup: (pid, startKey, options) => hostResolver.lookup(pid, startKey, options),
       onResolved: () => {
         if (!quitting) scheduleRefresh();
       },
@@ -236,13 +237,18 @@ function buildDemoSnapshot() {
 function buildSnapshot() {
   if (DEMO) return buildDemoSnapshot();
   // Sessions missing from one read stay for a short grace period.
-  const kept = grace.apply(readSessions(SESSIONS_DIR, pidIsAlive));
+  const read = grace.apply(readSessions(SESSIONS_DIR, pidIsAlive));
+  // Pruned with every session read, so a stale mark holds while its file stays.
+  hostLookups.prune(read.map((s) => s.sessionId));
+  // A terminal session whose host lookup proved its registry entry stale (a
+  // file left behind whose pid now belongs to another process) is dropped,
+  // until its pid or procStart changes.
+  const kept = read.filter((s) => !hostLookups.isStale(s));
   const keptIds = kept.map((s) => s.sessionId);
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   dismissals.prune(keptIds);
   finished.update(kept);
   planSource.prune(keptIds);
-  hostLookups.prune(keptIds);
   const visible = notDismissed(kept);
   lastKept = kept;
   lastVisible = visible;
@@ -1146,6 +1152,10 @@ async function runOpen(target) {
       focusWindowOf,
       folderNameOf,
     });
+  }
+  // Only the kind, the session id and the result: never a window title.
+  if (result === 'not-found' || result === 'failed') {
+    console.log(`[huddle] open ${target.kind} ${shown.sessionId}: ${result}`);
   }
   // A successful open counts as looking at the session: a finished buddy
   // leaves the panel on the next refresh. A failed open, or a host window

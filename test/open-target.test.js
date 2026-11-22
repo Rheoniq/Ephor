@@ -248,6 +248,158 @@ test('host lookups: prune forgets sessions that left, and a late answer for them
   assert.equal(h.calls.length, 3);
 });
 
+test('host lookups: an unresolvable host is retried after 60 s, then after 5 min, then not again', async () => {
+  const h = setup({ answers: { 10: null } });
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(h.calls.length, 1);
+  h.advance(60 * 1000);
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(h.calls.length, 2);
+  // The second miss waits 5 minutes.
+  h.advance(5 * 60 * 1000 - 1);
+  h.lookups.hostFor(ts('s1', 10));
+  assert.equal(h.calls.length, 2);
+  h.advance(1);
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(h.calls.length, 3);
+  // The third miss stops the lookups for this pid and procStart.
+  h.advance(24 * 60 * 60 * 1000);
+  assert.equal(h.lookups.hostFor(ts('s1', 10)), null);
+  assert.equal(h.calls.length, 3);
+  assert.equal(h.lookups.isStale(ts('s1', 10)), false);
+});
+
+test('host lookups: a new pid or procStart starts the backoff over', async () => {
+  const h = setup({ answers: { 10: null, 11: null } });
+  for (let i = 0; i < 3; i++) {
+    h.lookups.hostFor(ts('s1', 10));
+    await flush();
+    h.advance(10 * 60 * 1000);
+  }
+  assert.equal(h.calls.length, 3);
+  h.lookups.hostFor(ts('s1', 10));
+  assert.equal(h.calls.length, 3);
+  h.lookups.hostFor(ts('s1', 11));
+  assert.equal(h.calls.length, 4);
+  await flush();
+  h.lookups.hostFor(ts('s1', 11, '777'));
+  assert.equal(h.calls.length, 5);
+});
+
+test('host lookups: a name found on a retry is kept', async () => {
+  let answer = null;
+  const lookups = createHostLookups({ resolve: async () => answer, now: () => t });
+  let t = 0;
+  lookups.hostFor(ts('s1', 10));
+  await flush();
+  answer = { name: 'Zed', ownerPid: 1 };
+  t += 60 * 1000;
+  lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(lookups.hostFor(ts('s1', 10)), 'Zed');
+});
+
+// lookup deps: { host, stale } results, as host.js createHostResolver().lookup gives.
+function setupLookup(results) {
+  let t = 1000;
+  const calls = [];
+  let refreshes = 0;
+  const lookups = createHostLookups({
+    lookup: async (pid, startKey, options) => {
+      calls.push({ pid, startKey, options });
+      const r = results[pid];
+      return typeof r === 'function' ? r() : r;
+    },
+    now: () => t,
+    onResolved: () => {
+      refreshes += 1;
+    },
+  });
+  return { lookups, calls, refreshes: () => refreshes, advance: (ms) => { t += ms; } };
+}
+
+test('host lookups: a stale verdict marks the session stale, asks for a refresh and stops lookups', async () => {
+  const h = setupLookup({ 10: { host: null, stale: true } });
+  assert.equal(h.lookups.isStale(ts('s1', 10)), false);
+  assert.equal(h.lookups.hostFor(ts('s1', 10)), null);
+  assert.deepEqual(h.calls[0], { pid: 10, startKey: START, options: { revalidate: false } });
+  await flush();
+  assert.equal(h.lookups.isStale(ts('s1', 10)), true);
+  assert.equal(h.refreshes(), 1);
+  h.advance(24 * 60 * 60 * 1000);
+  assert.equal(h.lookups.hostFor(ts('s1', 10)), null);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.lookups.isStale(ts('s1', 10)), true);
+});
+
+test('host lookups: a stale session with a new pid or procStart is not stale and is looked up again', async () => {
+  const h = setupLookup({ 10: { host: null, stale: true }, 12: { host: { name: 'Zed', ownerPid: 2 }, stale: false } });
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(h.lookups.isStale(ts('s1', 10)), true);
+  assert.equal(h.lookups.isStale(ts('s1', 12)), false);
+  assert.equal(h.lookups.isStale(ts('s1', 10, '999')), false);
+  assert.equal(h.lookups.hostFor(ts('s1', 12)), null);
+  await flush();
+  assert.equal(h.lookups.hostFor(ts('s1', 12)), 'Zed');
+  assert.equal(h.lookups.isStale(ts('s1', 12)), false);
+});
+
+test('host lookups: a failed or empty lookup is not stale and backs off', async () => {
+  const h = setupLookup({
+    10: { host: null, stale: false },
+    11: () => Promise.reject(new Error('x')),
+    12: undefined,
+    13: { host: null, stale: 'yes' },
+  });
+  for (const pid of [10, 11, 12, 13]) h.lookups.hostFor(ts(`s${pid}`, pid));
+  await flush();
+  for (const pid of [10, 11, 12, 13]) assert.equal(h.lookups.isStale(ts(`s${pid}`, pid)), false, String(pid));
+  assert.equal(h.refreshes(), 0);
+  h.advance(60 * 1000);
+  for (const pid of [10, 11, 12, 13]) h.lookups.hostFor(ts(`s${pid}`, pid));
+  assert.equal(h.calls.length, 8);
+});
+
+test('host lookups: a found host through lookup is served', async () => {
+  const h = setupLookup({ 10: { host: { name: 'VS Code', ownerPid: 3 }, stale: false } });
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  assert.equal(h.lookups.hostFor(ts('s1', 10)), 'VS Code');
+  assert.equal(h.refreshes(), 1);
+});
+
+test('host lookups: a stale verdict for a session that left or changed is dropped', async () => {
+  let release;
+  const h = setupLookup({ 10: () => new Promise((r) => { release = r; }) });
+  h.lookups.hostFor(ts('s1', 10));
+  h.lookups.prune([]);
+  release({ host: null, stale: true });
+  await flush();
+  assert.equal(h.lookups.isStale(ts('s1', 10)), false);
+  assert.equal(h.refreshes(), 0);
+});
+
+test('host lookups: prune keeps the stale mark of a session still in the registry', async () => {
+  const h = setupLookup({ 10: { host: null, stale: true } });
+  h.lookups.hostFor(ts('s1', 10));
+  await flush();
+  h.lookups.prune(['s1']);
+  assert.equal(h.lookups.isStale(ts('s1', 10)), true);
+  h.lookups.prune([]);
+  assert.equal(h.lookups.isStale(ts('s1', 10)), false);
+});
+
+test('host lookups: isStale never throws on odd input and is false for desktop sessions', () => {
+  const h = setupLookup({});
+  for (const s of [null, undefined, 'x', {}, { sessionId: 'd', source: 'desktop', pid: 1, procStart: '1' }]) {
+    assert.equal(h.lookups.isStale(s), false);
+  }
+});
+
 test('host lookups: bad session values give null without a resolve', () => {
   const h = setup();
   for (const s of [null, undefined, 'x', { source: 'terminal' }, { sessionId: 5, source: 'terminal', pid: 1 }]) {
