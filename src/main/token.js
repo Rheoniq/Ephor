@@ -3,7 +3,9 @@
 // The shared secret the hooks send in X-Huddle-Token. Huddle creates it once
 // in its user-data folder; the user puts it in the HUDDLE_HOOK_TOKEN user
 // environment variable with the setup command. Huddle never sets the variable
-// itself and never logs the token.
+// itself and never logs the token. A program sees the variable only after it
+// was started again: Claude Desktop, and every terminal and editor that runs
+// Claude Code (they pass their environment on to the sessions they start).
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -34,7 +36,8 @@ function loadOrCreateToken(file, io = fs) {
   return token;
 }
 
-// The command the user runs once (then restarts Claude Desktop).
+// The command the user runs once (then restarts Claude Desktop and every
+// terminal and editor that runs Claude Code, so they see HUDDLE_HOOK_TOKEN).
 function setupCommand(token) {
   return `setx HUDDLE_HOOK_TOKEN ${token}`;
 }

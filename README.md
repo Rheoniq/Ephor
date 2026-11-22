@@ -1,6 +1,8 @@
 # Huddle
 
-Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Desktop (Claude Code) sessions that need attention, their status and how far each one is through its plan. The arrow on a session takes you to that session in Claude Desktop. The panel hides itself when nothing needs showing.
+Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Code sessions that need attention, in Claude Desktop and in terminals (Zed, VS Code, Cursor, JetBrains or any terminal), their status and how far each one is through its plan. The arrow on a Desktop session takes you to that session in Claude Desktop; on a terminal session it brings the window that hosts the session to the front. The panel hides itself when nothing needs showing.
+
+This branch adds terminal sessions: they are listed with a small badge naming their host program, and their arrow reads "Open in <host>" (see [Terminal sessions](#terminal-sessions)).
 
 Version 0.3.0 adds: a progress bar and a plan checklist per session, the last command a session requested, a distinct color for each visible session, and clearer question and permission cards.
 
@@ -36,7 +38,17 @@ Click a session to expand it:
 - Below it, "Last command requested:" and the last shell command the session asked to run, on one line (cut at 160 characters). It is the last one requested, not proof that it ran: a denied command, or the one a card is asking about, shows here too. Without a plan only that line shows, or "No plan yet".
 - Control and invisible characters in plan steps and in the command (bidi marks, zero-width characters, escape codes, variation selectors, blank-looking characters) show as `?`, so they cannot change what the line seems to say.
 
-Each row has the arrow (open in Claude Desktop) and the x (dismiss) stacked on its right edge.
+Each row has the arrow (open in Claude Desktop, or "Open in <host>" for a terminal session) and the x (dismiss) stacked on its right edge.
+
+## Terminal sessions
+
+Claude Code sessions running in Zed, VS Code, Cursor, JetBrains or any terminal are listed like Desktop sessions, under the same rules for which sessions show. Only interactive sessions count; headless and SDK sessions never show.
+
+- **Host badge:** a small badge after the name names the program that hosts the session (Zed, VS Code, Cursor, JetBrains, Terminal, or the program's own name). Huddle finds it by walking up the process tree from the session's process to the first program with a visible window. The lookup runs in the background; a host that cannot be found is asked again after 60 seconds, then after 5 minutes, and then not again for that session.
+- **Arrow:** "Open in <host>" brings that program's window to the front, restoring it when minimized. It picks the window whose title shows the session's folder name (see [Limits](#limits)). When the host is not known yet, the arrow looks it up on the click.
+- **No progress bar:** the plan comes from Claude Desktop's plan tool, which terminal sessions do not have. A terminal session shows its status label and, expanded, the last command it requested.
+- **Prompt cards** are off for terminal sessions by default (see [Answering from the panel](#answering-from-the-panel)).
+- A registry file left behind by a crashed session whose process id now belongs to another program is dropped as soon as the host lookup proves it stale. When two registry files name the same session, the one updated last counts.
 
 ## Panel controls
 
@@ -70,7 +82,7 @@ The panel stays above borderless full-screen windows (such as a browser video in
 
 ## Answering from the panel
 
-When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop (closes in 15 s)", and a line along its bottom edge that drains over the 15 second hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
+When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop (closes in 15 s)" ("Or answer in the terminal (closes in 15 s)" for a terminal session), and a line along its bottom edge that drains over the 15 second hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
 
 - **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
 - **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
@@ -87,8 +99,15 @@ Everything else, including Write, Edit and MCP tools, falls through to Desktop a
 
 How prompts reach the panel:
 
-- The hooks fire for every Claude Code session on this machine (Desktop, CLI, IDE, SDK). Huddle matches the hook's `session_id` against every registry session that is not dismissed (idle ones included), then the hook's transcript path. A hook from a session that is not in the registry, or that is dismissed, gets no card: an immediate "no decision", so Desktop (or the CLI) shows its own prompt.
+- The hooks apply to every Claude Code session on this machine (Desktop, terminals, IDEs, SDK). Huddle matches the hook's `session_id` against every registry session that is not dismissed (idle ones included), then the hook's transcript path. A hook from a session that is not in the registry, or that is dismissed, gets no card: an immediate "no decision", so Desktop (or the terminal) shows its own prompt.
 - One prompt per session at a time; a second one goes straight to Desktop.
+
+Terminal sessions:
+
+- Prompt cards for terminal sessions are behind the setting `terminalAnswering`, the tray checkbox "Answer terminal prompts". It is off by default until the live check in a terminal passes.
+- While it is off, a hook from a terminal session gets an immediate "no decision", so the terminal's own prompt appears at once, with no delay. Turning it off while a terminal card is open hands that prompt back to the terminal at once.
+- With it on, a terminal session's card works exactly like a Desktop one, under the same rules, and the terminal takes the place of Desktop as the fallback.
+- Not yet verified live: that a hook answer is honored in a terminal and that it suppresses the terminal's own dialog. The hook gate below proved this for Claude Desktop only.
 
 Desktop stays the fallback for everything:
 
@@ -103,7 +122,7 @@ Desktop stays the fallback for everything:
 
 Answering needs two `http` hooks in `~/.claude/settings.json` and the token in the user environment variable `HUDDLE_HOOK_TOKEN`. Huddle never edits that file or sets the variable. The exact entries, the token steps and the verified facts are in [docs/superpowers/notes/hook-setup.md](docs/superpowers/notes/hook-setup.md); the JSON shape is in `docs/superpowers/notes/hook-settings.json`.
 
-The token is 64 hex characters. The hook gate test used a shorter test token, so after the first start of 0.2.0 or later run the tray "Copy token setup command" again, paste and run the `setx` line, then restart Claude Desktop fully. The copied token can stay in Windows clipboard history (Win+V) if that is on; clear the entry.
+The token is 64 hex characters. The hook gate test used a shorter test token, so after the first start of 0.2.0 or later run the tray "Copy token setup command" again, paste and run the `setx` line, then restart Claude Desktop fully, and every terminal and editor that runs Claude Code: a program sees `HUDDLE_HOOK_TOKEN` only after a restart. The copied token can stay in Windows clipboard history (Win+V) if that is on; clear the entry.
 
 Without the hooks or the token, Huddle works as a viewer and Desktop shows every prompt.
 
@@ -111,17 +130,17 @@ Without the hooks or the token, Huddle works as a viewer and Desktop shows every
 
 1. Delete the two Huddle entries from `~/.claude/settings.json` (keep the guard entry).
 2. Run `reg delete HKCU\Environment /v HUDDLE_HOOK_TOKEN /f`. (`setx` with an empty value leaves an empty variable behind.)
-3. Restart Claude Desktop.
+3. Restart Claude Desktop, and every terminal and editor that runs Claude Code.
 
 ## Settings file
 
 Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file `hook-token`. Electron names the folder after the product name. A folder first created as `%APPDATA%\huddle` keeps that spelling; Windows ignores case, so both are the same folder.
 
 ```
-{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false }
+{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false }
 ```
 
-`hotkey` takes an Electron accelerator string. Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
+`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
 
 ## Running next to the first version
 
@@ -131,7 +150,8 @@ Both versions use the app name Huddle, so they share the settings folder and the
 
 Huddle only reads local files; it never writes to them.
 
-- Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped.
+- Session list: `~/.claude/sessions/*.json`, kept current with a file watcher plus a 2 second poll. Sessions whose process is gone are dropped, and so are entries whose `pidDomain` names something other than Windows (`win32`). When two files name the same session, the one with the newest `updatedAt` counts.
+- Host of a terminal session: one process table (pid, parent pid, name and start time of each process, through PowerShell's `Get-CimInstance Win32_Process`, cached for 5 seconds) and the visible windows of the programs above the session's process. Both run off the refresh path.
 - Plan and last command: each session's transcript under `~/.claude/projects/`, read backwards from the end until the latest plan and the latest shell command are found, at most 8 MiB per read. Results are cached per file; a grown file is read on from where the last read stopped. A file that was rewritten rather than appended to, or that grew by more than 8 MiB, is read again from the end.
 
 ## Run
@@ -186,13 +206,23 @@ Right-click the Huddle tray icon and tick "Start at login". It is off by default
 
 ## Limits
 
-- The arrow opens a `claude://` deep link. That link format is undocumented and may break with a Claude Desktop update. When the link cannot be opened, the arrow falls back to bringing the Claude Desktop window forward.
+- For a Desktop session the arrow opens a `claude://` deep link. That link format is undocumented and may break with a Claude Desktop update. When the link cannot be opened, the arrow falls back to bringing the Claude Desktop window forward.
 - Windows only.
 - Full screen: the panel and toasts stay above borderless full-screen windows, not above exclusive full-screen apps (some games).
 - Port 47821 is fixed.
 - Write, Edit, MCP and other non-shell approvals always stay in Desktop.
 - The progress view reads Desktop's undocumented transcript format; a format change turns the bar off until Huddle is updated.
 - A plan whose latest full list lies more than 8 MiB from the end of the transcript when Huddle reads it from scratch is not found; the session then shows its status label.
+
+Terminal sessions:
+
+- The arrow picks the window by the session's folder name (the last part of its working directory) in the window title, as a whole name and ignoring case: "Huddle" matches "Huddle - README.md" or "~/code/Huddle/src", not "Huddle-terminal" or "Old-Huddle". Among several matching windows a normal one wins, then the topmost. With no match, the host's window is used only when it has exactly one normal window; otherwise the result is "not-found" and the arrow does nothing.
+- The arrow brings the window forward but cannot select a tab or a split inside it.
+- A click takes about 1 second (two PowerShell calls).
+- The badge and the arrow need Windows PowerShell 5.1 with `Add-Type` allowed. Under Constrained Language Mode or app control (AppLocker, WDAC) there is no badge and the arrow does nothing.
+- A session whose registry entry names a pid domain other than Windows (WSL, another machine) is not listed. A session whose host cannot be resolved (for example one running in WSL) gets no badge.
+- Terminal sessions get no progress bar: the plan comes from Desktop's plan tool. They show the status label and the last command.
+- A shell that Windows 11 starts in the default terminal from Start may have no resolvable host (not verified).
 
 ### Verified live (hook gate, 2026-11-20)
 
@@ -217,9 +247,15 @@ The hook gate ran before the `Origin` and `Host` checks were added: the server n
 - Clicking the toast cross with a real pointer.
 - Two monitors and mixed DPI.
 - The plan reader's real-world behaviour on very large transcripts (speed, and whether the plan is still found).
+- Terminal sessions: that a hook answer is honored in a terminal and suppresses the terminal's own dialog (the reason `terminalAnswering` is off by default).
+- A real arrow click from the panel on a terminal session (the window lookup and focus were checked from a script only).
+- The Windows 11 default-terminal case (a shell started from Start).
+- The badge and the arrow on managed machines with endpoint protection (EDR), which may block or slow the PowerShell calls.
 
 ## Privacy
 
 Huddle reads `~/.claude` on your own machine. It makes no network requests beyond `127.0.0.1` and sends nothing anywhere. The hook server listens on `127.0.0.1` only and needs the token.
+
+For terminal sessions Huddle reads the process table (pid, parent pid, name and start time of each process) and the window titles of the programs that may host a session. Both stay in memory only; they are never stored, logged or sent anywhere.
 
 A command card shows the command only while the prompt is open; it is never stored or logged. The "Last command requested" line (cut to 160 characters) and the plan steps are read from the local transcript and kept in Huddle's memory while the session is shown; they are never written to disk, logged or sent anywhere.

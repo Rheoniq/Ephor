@@ -2,7 +2,7 @@
   "name": "huddle",
   "productName": "Huddle",
   "version": "0.3.0",
-  "description": "Standalone panel showing Claude Desktop sessions",
+  "description": "Standalone panel showing Claude Code sessions in Claude Desktop and in terminals",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
