@@ -49,12 +49,11 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
     pid: 42,
     updatedAt: 1,
   };
-  assert.deepEqual(toSnapshotSession(s, ['x']), {
+  assert.deepEqual(toSnapshotSession(s), {
     sessionId: 'a',
     hostSessionId: 'local_a',
     name: 'N',
     status: 'busy',
-    steps: ['x'],
     finished: false,
     plan: null,
     lastCommand: null,
@@ -63,35 +62,34 @@ test('toSnapshotSession keeps only the fields the renderer uses', () => {
 
 test('toSnapshotSession sets finished as a boolean', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'idle', cwd: 'C:\\x' };
-  assert.equal(toSnapshotSession(s, [], undefined, true).finished, true);
-  assert.equal(toSnapshotSession(s, [], undefined, false).finished, false);
-  assert.equal(toSnapshotSession(s, []).finished, false);
-  assert.equal(toSnapshotSession(s, [], undefined, 'yes').finished, false);
+  assert.equal(toSnapshotSession(s, undefined, true).finished, true);
+  assert.equal(toSnapshotSession(s, undefined, false).finished, false);
+  assert.equal(toSnapshotSession(s).finished, false);
+  assert.equal(toSnapshotSession(s, undefined, 'yes').finished, false);
 });
 
 test('toSnapshotSession adds a prompt only when one is given', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'waiting', cwd: 'C:\\x' };
   const prompt = { id: 'p1', kind: 'permission', toolName: 'Bash', command: 'npm test' };
-  assert.deepEqual(toSnapshotSession(s, [], prompt), {
+  assert.deepEqual(toSnapshotSession(s, prompt), {
     sessionId: 'a',
     hostSessionId: 'local_a',
     name: 'N',
     status: 'waiting',
-    steps: [],
     finished: false,
     plan: null,
     lastCommand: null,
     prompt,
   });
-  assert.equal('prompt' in toSnapshotSession(s, [], null), false);
-  assert.equal('prompt' in toSnapshotSession(s, []), false);
+  assert.equal('prompt' in toSnapshotSession(s, null), false);
+  assert.equal('prompt' in toSnapshotSession(s), false);
 });
 
 test('snapshot gate ignores changes in fields that are not sent', () => {
   const g = createSnapshotGate();
   const base = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy' };
-  assert.equal(g.shouldSend({ sessions: [toSnapshotSession({ ...base, updatedAt: 1, pid: 1 }, [])] }), true);
-  assert.equal(g.shouldSend({ sessions: [toSnapshotSession({ ...base, updatedAt: 2, pid: 2 }, [])] }), false);
+  assert.equal(g.shouldSend({ sessions: [toSnapshotSession({ ...base, updatedAt: 1, pid: 1 })] }), true);
+  assert.equal(g.shouldSend({ sessions: [toSnapshotSession({ ...base, updatedAt: 2, pid: 2 })] }), false);
 });
 
 test('clampHeight rounds and clamps to 40..800', () => {
@@ -112,10 +110,10 @@ test('clampHeight rejects non-numbers and non-finite values', () => {
 
 test('snapshot gate skips a snapshot identical to the last one sent', () => {
   const g = createSnapshotGate();
-  const a = { sessions: [{ sessionId: 'a', status: 'busy', steps: [] }] };
+  const a = { sessions: [{ sessionId: 'a', status: 'busy', plan: null }] };
   assert.equal(g.shouldSend(a), true);
-  assert.equal(g.shouldSend({ sessions: [{ sessionId: 'a', status: 'busy', steps: [] }] }), false);
-  assert.equal(g.shouldSend({ sessions: [{ sessionId: 'a', status: 'waiting', steps: [] }] }), true);
+  assert.equal(g.shouldSend({ sessions: [{ sessionId: 'a', status: 'busy', plan: null }] }), false);
+  assert.equal(g.shouldSend({ sessions: [{ sessionId: 'a', status: 'waiting', plan: null }] }), true);
   assert.equal(g.shouldSend({ sessions: [] }), true);
 });
 
@@ -133,7 +131,7 @@ const items = (...statuses) => statuses.map((status, i) => ({ content: `Step ${i
 test('toSnapshotSession carries plan and lastCommand when given', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy', cwd: 'C:\\x' };
   const plan = snapshotPlan(items('completed', 'in_progress'));
-  const out = toSnapshotSession(s, [], undefined, false, plan, 'npm test');
+  const out = toSnapshotSession(s, undefined, false, plan, 'npm test');
   assert.deepEqual(out.plan, plan);
   assert.equal(out.lastCommand, 'npm test');
   assert.deepEqual(Object.keys(out), [
@@ -141,7 +139,6 @@ test('toSnapshotSession carries plan and lastCommand when given', () => {
     'hostSessionId',
     'name',
     'status',
-    'steps',
     'finished',
     'plan',
     'lastCommand',
@@ -150,11 +147,11 @@ test('toSnapshotSession carries plan and lastCommand when given', () => {
 
 test('toSnapshotSession: plan and lastCommand default to null; non-strings are dropped', () => {
   const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy' };
-  const out = toSnapshotSession(s, []);
+  const out = toSnapshotSession(s);
   assert.equal(out.plan, null);
   assert.equal(out.lastCommand, null);
-  assert.equal(toSnapshotSession(s, [], undefined, false, undefined, 42).lastCommand, null);
-  assert.equal(toSnapshotSession(s, [], undefined, false, undefined, '').lastCommand, null);
+  assert.equal(toSnapshotSession(s, undefined, false, undefined, 42).lastCommand, null);
+  assert.equal(toSnapshotSession(s, undefined, false, undefined, '').lastCommand, null);
 });
 
 test('snapshotPlan is null without items', () => {
@@ -288,10 +285,15 @@ test('createPlanSource: the same transcript gives an equal snapshot (gate stays 
   const g = createSnapshotGate();
   const snap = () => {
     const p = src.read(s);
-    return { sessions: [toSnapshotSession(s, [], undefined, false, p.plan, p.lastCommand)] };
+    return { sessions: [toSnapshotSession(s, undefined, false, p.plan, p.lastCommand)] };
   };
   assert.equal(g.shouldSend(snap()), true);
   assert.equal(g.shouldSend(snap()), false);
+});
+
+test('toSnapshotSession sends no steps list, even when the session has one', () => {
+  const s = { sessionId: 'a', hostSessionId: 'local_a', name: 'N', status: 'busy', steps: ['Ran: x'] };
+  assert.equal('steps' in toSnapshotSession(s), false);
 });
 
 test('demo sessions: the planned plans, and a command on each', () => {

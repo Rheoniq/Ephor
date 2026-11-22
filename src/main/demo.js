@@ -11,9 +11,9 @@ function demoPlan(contents, current) {
 }
 
 // Fixed fake sessions for HUDDLE_DEMO=1, so the UI can be checked without
-// reading ~/.claude. Steps are oldest first, like readSteps returns them.
-// `planItems` are update_plan items as the plan reader returns them (no key
-// means no plan); `lastCommand` is the last shell command.
+// reading ~/.claude. `planItems` are update_plan items as the plan reader
+// returns them (no key means no plan); `lastCommand` is the last shell
+// command.
 function demoSessions() {
   const now = Date.now();
   const base = { cwd: 'C:\\demo', pid: 0, updatedAt: now };
@@ -24,7 +24,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-busy',
       name: 'Write plan 5: the vault sync and backup rotation',
       status: 'busy',
-      steps: ['Read docs/plan.md', 'Edit src/vault.js', 'Ran: npm test'],
       planItems: demoPlan(
         ['Read the spec', 'Plan model', 'Transcript reader', 'Snapshot wiring', 'Animations', 'Docs', 'Review'],
         5,
@@ -37,7 +36,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-waiting',
       name: 'Run plan 4, Tasks 7 to 9 and report back',
       status: 'waiting',
-      steps: ['Edit src/a.js', 'Ran: npm test -- --watch=false', 'Asked you a question'],
       planItems: demoPlan(['Read the plan', 'Watching', 'Task 7', 'Task 8', 'Task 9'], 2),
       lastCommand: 'npm test -- --watch=false',
     },
@@ -50,7 +48,6 @@ function demoSessions() {
       name: 'Review the invoice export and fix the totals',
       status: 'idle',
       before: 'busy',
-      steps: ['Read src/export.js', 'Edit src/export.js', 'Ran: npm test'],
       planItems: demoPlan(['Read the export', 'Fix the totals', 'Add a test', 'Run the tests'], 5),
       lastCommand: 'npm test',
     },
@@ -61,7 +58,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-idle',
       name: 'Notification sounds configuration',
       status: 'idle',
-      steps: [],
       lastCommand: 'git status',
     },
     {
@@ -71,7 +67,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-long',
       name: 'A very long session name with <b>x</b> markup that must be shown literally and truncated',
       status: 'busy',
-      steps: ['Write <script>alert(1)</script>.md'],
       lastCommand: 'echo "<b>not bold</b>" > notes/<script>.md',
     },
     {
@@ -80,7 +75,6 @@ function demoSessions() {
       hostSessionId: 'local_demo-drafting',
       name: 'Draft the newsletter for December',
       status: 'busy',
-      steps: ['Read notes/ideas.md', 'Write drafts/december.md'],
       planItems: demoPlan(['Collect the topics', 'Outline', 'Pick the hook', 'Drafting', 'Edit', 'Send to review'], 4),
       lastCommand: 'git diff --stat drafts/december.md',
     },
@@ -102,7 +96,8 @@ function demoPrompts() {
         tool_input: {
           questions: [
             {
-              question: 'Which storage should the sync use?',
+              question:
+                'Where should the vault sync keep the nightly backups, so that they survive a disk failure on this PC?',
               header: 'Storage',
               multiSelect: false,
               options: [

@@ -20,7 +20,6 @@ const {
 } = require('electron');
 
 const { readSessions, pidIsAlive } = require('./sessions');
-const { readSteps } = require('./steps');
 const { createDismissals } = require('./dismissals');
 const { transcriptPath } = require('./paths');
 const { openClaudeDesktop } = require('./focus');
@@ -74,7 +73,6 @@ const HOME = os.homedir();
 const SESSIONS_DIR = path.join(HOME, '.claude', 'sessions');
 const POLL_MS = 2000;
 const DEBOUNCE_MS = 150;
-const STEPS_PER_SESSION = 8;
 // The renderer reports its content height; the window starts small.
 const WIN_WIDTH = 360;
 // Collapsed, the window shrinks to the pill so no transparent strip can
@@ -114,7 +112,6 @@ let shownToast = null; // the toast in toastWin, if any
 let demoToastSent = false;
 const grace = createGrace(2);
 const snapshotGate = createSnapshotGate();
-const lastSteps = new Map(); // sessionId -> last good steps
 // One plan reader for all sessions; planSource keeps each session's last good
 // plan and last command and forgets sessions that left the kept list.
 const planSource = createPlanSource(
@@ -156,17 +153,6 @@ let lastKept = []; // kept sessions from the last read, with cwd
 let lastVisible = []; // the kept sessions that are not dismissed
 
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
-
-function safeSteps(s) {
-  try {
-    const steps = readSteps(transcriptPath(HOME, s.cwd, s.sessionId), STEPS_PER_SESSION);
-    lastSteps.set(s.sessionId, steps);
-    return steps;
-  } catch (err) {
-    console.error(`[huddle] reading steps for ${s.sessionId} failed: ${err.message}`);
-    return lastSteps.get(s.sessionId) || [];
-  }
-}
 
 // The prompt card data for a session, or undefined.
 function promptFor(sessionId) {
@@ -215,7 +201,6 @@ function buildDemoSnapshot() {
   const sessions = shownSessions(visible).map((s) =>
     toSnapshotSession(
       s,
-      s.steps,
       promptFor(s.sessionId),
       finished.isFinished(s.sessionId),
       snapshotPlan(s.planItems),
@@ -234,7 +219,6 @@ function buildSnapshot() {
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   dismissals.prune(keptIds);
   finished.update(kept);
-  for (const id of lastSteps.keys()) if (!lastStatus.has(id)) lastSteps.delete(id);
   planSource.prune(keptIds);
   const visible = notDismissed(kept);
   lastKept = kept;
@@ -247,7 +231,6 @@ function buildSnapshot() {
     const { plan, lastCommand } = planSource.read(s);
     return toSnapshotSession(
       s,
-      safeSteps(s),
       promptFor(s.sessionId),
       finished.isFinished(s.sessionId),
       plan,

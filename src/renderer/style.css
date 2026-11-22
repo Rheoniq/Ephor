@@ -31,6 +31,16 @@
   --done: #4a6d8f; /* slate blue */
   --done-text: #4a6d8f;
 
+  --track: rgba(20, 20, 19, 0.10); /* empty part of the plan bar */
+  --mark: #7d7b73; /* check boxes: 3.5:1 or more on the plain and waiting card */
+  /* Chips on the plan label line; text 4.5:1 or more on the chip, on the
+     plain and the waiting card. */
+  --chip-wait-bg: rgba(201, 100, 66, 0.12);
+  --chip-wait-text: #874631;
+  --chip-done-bg: rgba(74, 109, 143, 0.12);
+  --chip-done-text: #3a5a7a;
+  --prompt-line: rgba(201, 100, 66, 0.45); /* prompt card edge */
+
   --shadow: 0 3px 10px rgba(20, 20, 19, 0.10), 0 1px 2px rgba(20, 20, 19, 0.06);
   --card-shadow: 0 1px 2px rgba(20, 20, 19, 0.04);
 }
@@ -60,6 +70,14 @@
     --busy-text: #92a27c;
     --done: #73a1cf;
     --done-text: #73a1cf;
+
+    --track: rgba(240, 238, 230, 0.13);
+    --mark: #8a877f;
+    --chip-wait-bg: rgba(217, 119, 87, 0.16);
+    --chip-wait-text: #eea288;
+    --chip-done-bg: rgba(115, 161, 207, 0.16);
+    --chip-done-text: #97bbe0;
+    --prompt-line: rgba(217, 119, 87, 0.45);
 
     --shadow: 0 3px 10px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
     --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
@@ -157,6 +175,10 @@ body {
 /* Session card. Waiting gets the clay tint and a clay edge; every status
    also has its own label and avatar face, so color is never the only cue. */
 .buddy {
+  /* The containing block of its .sr-only text, which would otherwise be
+     placed against the page and stretch it past the window when the list
+     scrolls (a second scrollbar). */
+  position: relative;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -178,6 +200,16 @@ body {
   padding-right: 6px;
 }
 
+/* Open (arrow) above hide (x), centered against the avatar and name. The
+   3 px above and below keep the top button clear of the card's corner. */
+.row-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 0;
+}
+
 button {
   -webkit-app-region: no-drag;
   font: inherit;
@@ -197,6 +229,8 @@ button:focus-visible {
 
 .buddy-body {
   flex: 1;
+  /* The full row height, so the hover and the click area match the row. */
+  align-self: stretch;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -282,52 +316,197 @@ button:focus-visible {
   color: var(--fg);
 }
 
-/* Recent steps: a quiet list on a thin rule, aligned with the name. */
-.steps {
-  list-style: none;
-  margin: -2px 14px 12px 59px;
-  padding: 1px 0 1px 10px;
-  border-left: 2px solid var(--rule);
-  font: 12px/1.45 var(--sans);
-  color: var(--muted);
+/* Plan bar under the name: a thin track filled to the current step in the
+   session's avatar color (an SVG fill attribute, so no inline style), then
+   "5/7 Animations" with a chip for waiting or finished. The phase is cut
+   with an ellipsis when the line is short of room; the tooltip and the
+   button's accessible name keep the whole text. */
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 5px;
 }
 
-.steps li {
+.bar {
+  display: block;
+  width: 100%;
+  height: 4px;
+}
+
+.bar-track { fill: var(--track); }
+
+.progress-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  font: 11.5px/16px var(--sans);
+}
+
+.progress-count {
+  flex: none;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-phase {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  color: var(--muted);
 }
 
-.steps li:first-child { color: var(--fg); }
-
-.steps .no-steps { font-style: italic; }
-
-/* Prompt card under the row: a question with option buttons, or a
-   permission request with Allow and Deny. Aligned with the name. */
-.prompt {
-  margin: -2px 12px 12px 59px;
-  padding: 10px 12px 12px;
-  background: var(--inset);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+.chip {
+  flex: none;
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 999px;
+  font: 600 11px/16px var(--sans);
 }
 
-.prompt + .steps { margin-top: 0; }
-
-.prompt-text,
-.prompt-tool,
-.prompt-command {
-  margin: 0 0 8px;
+.chip-waiting {
+  background: var(--chip-wait-bg);
+  color: var(--chip-wait-text);
 }
 
-.prompt-text {
-  font: 400 14px/1.35 var(--serif);
+.chip-finished {
+  background: var(--chip-done-bg);
+  color: var(--chip-done-text);
+}
+
+/* The status line moves below a prompt card, in the same column as under
+   the name: from the name's left edge to where the open and hide buttons
+   begin (6 + 28 + 2 + 6 = 42 px from the card's right edge). */
+.after-prompt { margin: -2px 42px 12px 59px; }
+
+.after-prompt .progress { margin-top: 0; }
+
+/* Expanded view: the plan checklist and the last command, aligned with the
+   name. Done steps are muted, the active step is bold, steps still to do
+   are plain. Marks are 3:1 or more on the card in both themes. */
+.details {
+  margin: -2px 14px 12px 59px;
+}
+
+.plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 12.5px/17px var(--sans);
+}
+
+.plan-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--fg);
+}
+
+.plan-item.completed { color: var(--muted); }
+
+.plan-item.active { font-weight: 600; }
+
+.plan-text {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.prompt-tool {
-  margin-bottom: 4px;
-  font: 600 12.5px/1.3 var(--sans);
+.mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.plan-item .mark { margin-top: 0.5px; }
+
+.box-fill { fill: var(--mark); }
+
+.box-check {
+  fill: none;
+  stroke: var(--card);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.box-line {
+  fill: none;
+  stroke: var(--mark);
+  stroke-width: 1.5;
+}
+
+.spin-track {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 2.2;
+}
+
+/* The arc's color is the session color, set as an SVG attribute: about
+   half of the ring (its length is 2 pi 5.5, about 34.6). */
+.spin-arc {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-dasharray: 16 100;
+}
+
+.last-command {
+  margin: 8px 0 0;
+  font: 11.5px/1.4 var(--mono);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.plan + .last-command {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.last-command:first-child { margin-top: 0; }
+
+.last-label { font-weight: 600; }
+
+.no-plan {
+  margin: 0;
+  font: italic 13px/1.4 var(--serif);
+  color: var(--muted);
+}
+
+/* Prompt card right under the name, over the full card width: a question
+   with an option button per choice, or a command with Deny and Allow. The
+   question is the largest text on the card and is never cut. */
+.prompt {
+  position: relative;
+  margin: -1px 10px 10px;
+  padding: 10px 12px 15px;
+  background: var(--inset);
+  border: 1px solid var(--prompt-line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.prompt-kicker {
+  margin: 0 0 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 600 11.5px/1.3 var(--sans);
+  color: var(--muted);
+}
+
+.prompt-text {
+  margin: 0 0 10px;
+  font: 400 16px/1.3 var(--serif);
+  color: var(--fg);
   overflow-wrap: anywhere;
 }
 
@@ -335,43 +514,94 @@ button:focus-visible {
    only for what is shown (prompts.js keeps it to 8 lines and 600 characters;
    the panel list scrolls when the card is tall). */
 .prompt-command {
-  margin-bottom: 10px;
+  margin: 0 0 10px;
+  padding: 7px 9px;
+  background: var(--control);
+  border: 1px solid var(--line);
+  border-radius: 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 12px/1.35 var(--mono);
-  color: var(--muted);
+  font: 12px/1.4 var(--mono);
+  color: var(--fg);
 }
 
 .prompt-options {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
 }
 
-/* Pill buttons. Labels wrap rather than cut, so the whole choice is
-   visible; the radius stays a pill on one line and soft on more. */
+.prompt-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.prompt-actions .prompt-btn { flex: 1 1 0; }
+
 .prompt-btn {
-  max-width: 100%;
-  min-height: 28px;
-  padding: 4px 12px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 12px;
   border: 1px solid var(--control-line);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--control);
   color: var(--fg);
-  font: 12.5px/1.3 var(--sans);
-  text-align: left;
+  font: 600 13px/1.3 var(--sans);
+  text-align: center;
   overflow-wrap: anywhere;
 }
 
 .prompt-btn:hover { background: linear-gradient(var(--hover), var(--hover)), var(--control); }
 
-/* A picked option on a multi-select question: a thicker clay ring. */
+/* An option: the label, and its description below in muted text. Labels
+   and descriptions wrap rather than cut, so the whole choice is visible. */
+.prompt-btn.option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 12px 8px;
+  text-align: left;
+}
+
+.opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.opt-label { font: 600 13px/17px var(--sans); }
+
+.opt-desc {
+  font: 400 12px/1.35 var(--sans);
+  color: var(--muted);
+}
+
+.opt-mark { margin-top: 0.5px; }
+
+/* A picked option on a multi-select question: a clay ring and a clay box. */
 .prompt-btn.chosen,
 .prompt-btn.chosen:hover {
   border-color: var(--clay-strong);
   box-shadow: inset 0 0 0 1px var(--clay-strong);
   background: linear-gradient(var(--wait-tint), var(--wait-tint)), var(--control);
 }
+
+.prompt-btn.chosen .box-fill { fill: var(--clay-strong); }
+
+.prompt-btn.chosen .box-check { stroke: var(--on-clay); }
+
+/* Done and Allow: the clay button that answers. */
+.prompt-btn.primary {
+  background: var(--clay);
+  border-color: var(--clay-strong);
+  color: var(--on-clay);
+}
+
+.prompt-btn.primary:hover { background: linear-gradient(rgba(20, 20, 19, 0.07), rgba(20, 20, 19, 0.07)), var(--clay); }
+
+.prompt-btn.done { margin-top: 2px; }
 
 .prompt-btn:disabled {
   opacity: 0.45;
@@ -380,15 +610,34 @@ button:focus-visible {
 
 .prompt-btn:disabled:hover { background: var(--control); }
 
-.prompt-btn.done,
-.prompt-btn.allow { font-weight: 600; }
+.prompt-btn.primary:disabled:hover { background: var(--clay); }
 
-/* Armed: the next click on Allow sends it. */
+/* Armed: the next click on Allow sends it. An ink ring inside the clay and
+   the label "Confirm allow" set it apart from the first state. */
 .prompt-btn.allow.armed,
 .prompt-btn.allow.armed:hover {
   background: var(--clay);
-  border-color: var(--clay-strong);
-  color: var(--on-clay);
+  border-color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--fg);
+}
+
+.prompt-hint {
+  margin: 10px 0 0;
+  font: 11.5px/1.3 var(--sans);
+  color: var(--muted);
+}
+
+/* Time left of the hold: a thin clay line along the card's bottom edge that
+   drains in 15 s (renderer.js keeps it in step across re-renders). Without
+   motion it stays full. Decorative: hidden from screen readers. */
+.prompt-drain {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--clay-strong);
+  transform-origin: left center;
 }
 
 .sr-only {
@@ -496,6 +745,21 @@ button:focus-visible {
   .av-waiting .av-alert { animation: av-hop 2.4s steps(1, end) infinite; }
 
   .pill-alert { animation: av-pulse 1.4s ease-in-out infinite; }
+
+  /* The active plan step's ring turns; with reduced motion it stands still. */
+  .mark-spinner { animation: spin 1s linear infinite; }
+
+  /* 15 s: main's hold (main.js HOLD_MS), after which Desktop takes over. */
+  .prompt-drain { animation: prompt-drain 15s linear forwards; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes prompt-drain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
 }
 
 @keyframes av-breathe {

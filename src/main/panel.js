@@ -37,13 +37,12 @@ function createSnapshotGate() {
 // session that just finished and was not looked at yet (finished.js).
 // `plan` (from snapshotPlan) and `lastCommand` are always present, null when
 // unknown, so the snapshot keeps one shape.
-function toSnapshotSession(s, steps, prompt, finished, plan, lastCommand) {
+function toSnapshotSession(s, prompt, finished, plan, lastCommand) {
   const out = {
     sessionId: s.sessionId,
     hostSessionId: s.hostSessionId,
     name: s.name,
     status: s.status,
-    steps,
     finished: finished === true,
     plan: plan || null,
     lastCommand: typeof lastCommand === 'string' && lastCommand ? lastCommand : null,
