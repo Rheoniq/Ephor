@@ -62,6 +62,7 @@ const {
   armHold,
   answerInTime,
   releasePrompt,
+  MAX_PROMPT_ID_LEN,
 } = require('./answering');
 const { loadOrCreateToken, setupCommand } = require('./token');
 const { createControls, hideTitle } = require('./controls');
@@ -108,7 +109,6 @@ const TOAST_MS = 4000;
 const HOOK_PORT = 47821;
 let holdMs = SETTINGS_DEFAULTS.holdSeconds * 1000;
 const TOKEN_FILE = 'hook-token';
-const MAX_PROMPT_ID_LEN = 100;
 // While the port is taken (or the server failed to start), listening is
 // tried again this often until it works or the app quits.
 const ANSWER_RETRY_MS = 30000;

@@ -321,7 +321,7 @@ button:focus-visible {
 
 .host-badge {
   flex: 0 0 auto;
-  max-width: 10em;
+  max-width: 7em;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -766,6 +766,14 @@ button:focus-visible {
 .release-btn:hover { background: linear-gradient(var(--hover), var(--hover)), var(--control); }
 
 .release-btn:active { background: linear-gradient(var(--press), var(--press)), var(--control); }
+
+/* Released: inert like a disabled prompt button until the card goes. */
+.release-btn:disabled,
+.release-btn:disabled:hover {
+  opacity: 0.45;
+  cursor: default;
+  background: var(--control);
+}
 
 .release-text {
   min-width: 0;

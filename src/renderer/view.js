@@ -96,7 +96,33 @@
     return { current, open, back, sync, onPromptsSettled, needsYou };
   }
 
-  const api = { createViewState, cardKind };
+  // Input types that do not take text: Escape there still goes back.
+  const NON_TEXT_INPUTS = ['button', 'checkbox', 'radio', 'submit', 'reset', 'image', 'file', 'range', 'color'];
+
+  function textLike(target) {
+    if (target === null || typeof target !== 'object') return false;
+    if (target.isContentEditable === true) return true;
+    const tag = typeof target.tagName === 'string' ? target.tagName.toUpperCase() : '';
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag !== 'INPUT') return false;
+    const type = typeof target.type === 'string' ? target.type.toLowerCase() : '';
+    return !NON_TEXT_INPUTS.includes(type);
+  }
+
+  // Whether a keydown returns the session view to the list: a plain Escape
+  // (no modifier, not while composing) in the session view, while no
+  // text-like control has focus and no pointer is pressed. `ev` carries the
+  // key, the modifier flags, isComposing, target (the focused element), view
+  // ('list' or 'session') and pointerDown.
+  function escapeGoesBack(ev) {
+    if (ev === null || typeof ev !== 'object' || Array.isArray(ev)) return false;
+    if (ev.key !== 'Escape' || ev.view !== SESSION || ev.pointerDown === true) return false;
+    if (ev.ctrlKey === true || ev.altKey === true || ev.metaKey === true || ev.shiftKey === true) return false;
+    if (ev.isComposing === true) return false;
+    return !textLike(ev.target);
+  }
+
+  const api = { createViewState, cardKind, escapeGoesBack };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddleView = api;
 })(typeof window !== 'undefined' ? window : globalThis);

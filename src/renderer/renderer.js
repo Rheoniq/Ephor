@@ -232,8 +232,9 @@
   // The line under a name with no bar to show (no plan, or a busy session
   // past its complete plan): the chip, or "Working" for a busy session.
   // Hidden from screen readers like the bar. null when there is nothing.
-  function tagLine(kind) {
+  function tagLine(kind, noChip) {
     if (CHIPS[kind]) {
+      if (noChip) return null;
       const line = el('span', 'tag-line');
       line.setAttribute('aria-hidden', 'true');
       line.append(el('span', `chip chip-${kind}`, CHIPS[kind]));
@@ -338,18 +339,23 @@
   // hold, then a line that drains over the hold (decorative: hidden from
   // screen readers and still when motion is reduced; the text is the time
   // cue, updated at most once a second and never announced).
-  function promptFoot(st, id, s) {
+  function promptFoot(st, id, s, released) {
     const label = window.HuddlePrompt.releaseLabel(s.source, s.host);
     const releaseBtn = el('button', 'release-btn');
     releaseBtn.type = 'button';
     releaseBtn.dataset.role = 'release';
     releaseBtn.title = 'Hands the question back and opens the app';
     releaseBtn.append(icon('external', 14), el('span', 'release-text', label));
+    releaseBtn.disabled = released;
     releaseBtn.addEventListener('click', () => {
       // A click on a card younger than MIN_AGE_MS is ignored, like the
-      // options. The release stands even if the app does not open; the next
-      // snapshot drops the card.
-      if (st.release()) window.huddle.release(id).catch(() => 'failed');
+      // options. The release stands even if the app does not open. The card
+      // turns inert at once (no stale "Confirm allow", no live options); the
+      // next snapshot drops it.
+      if (st.release()) {
+        window.huddle.release(id).catch(() => 'failed');
+        render();
+      }
     });
     const left = el('span', 'prompt-countdown', countdownFor(id));
     left.dataset.promptId = id;
@@ -375,14 +381,15 @@
   // kicker and described by the elements whose ids are in describedBy (the
   // question or the command); all ids come from the prompt id, so they hold
   // across renders.
-  function promptCard(kind, kicker, st, id, content, describedBy, s) {
+  function promptCard(kind, kicker, st, pv, content, describedBy, s) {
+    const id = pv.id;
     const card = el('div', `prompt ${kind}`);
     const kick = el('p', 'prompt-kicker', kicker);
     kick.id = window.HuddlePrompt.promptDomIds(id).kicker;
     card.setAttribute('role', 'group');
     card.setAttribute('aria-labelledby', kick.id);
     card.setAttribute('aria-describedby', describedBy.join(' '));
-    card.append(kick, ...content, ...promptFoot(st, id, s));
+    card.append(kick, ...content, ...promptFoot(st, id, s, pv.released));
     return card;
   }
 
@@ -402,6 +409,7 @@
       const label = str(o.label);
       const description = str(o.description);
       const b = promptButton(undefined, `opt-${j}`, 'option');
+      b.disabled = pv.released;
       const text = el('span', 'opt-text');
       text.append(el('span', 'opt-label', label));
       if (description) text.append(el('span', 'opt-desc', description));
@@ -422,14 +430,14 @@
     });
     if (multi) {
       const done = promptButton('Done', 'done', 'done');
-      done.disabled = pv.chosen.length === 0;
+      done.disabled = pv.released || pv.chosen.length === 0;
       done.addEventListener('click', () => sendAnswers(pv.id, st.finishMulti()));
       options.append(done);
     }
     const ids = window.HuddlePrompt.promptDomIds(pv.id);
     const text = el('p', 'prompt-text', str(q.question));
     text.id = ids.text;
-    return promptCard('ask', 'Question', st, pv.id, [text, options], [ids.text], s);
+    return promptCard('ask', 'Question', st, pv, [text, options], [ids.text], s);
   }
 
   // Renders now, or once no pointer is down, so a press keeps its button.
@@ -456,6 +464,7 @@
       'allow',
       pv.armed ? 'allow primary armed' : 'allow primary',
     );
+    allow.disabled = pv.released;
     allow.addEventListener('click', () => {
       const wasArmed = st.confirmPending();
       if (st.armAllow() === 'send') {
@@ -468,6 +477,7 @@
       render();
     });
     const deny = promptButton('Deny', 'deny', 'deny');
+    deny.disabled = pv.released;
     deny.addEventListener('click', () => {
       if (st.deny()) window.huddle.answer({ id: pv.id, kind: 'permission', allow: false });
       render();
@@ -476,7 +486,7 @@
     actions.append(deny, allow);
     const ids = window.HuddlePrompt.promptDomIds(pv.id);
     command.id = ids.command;
-    return promptCard('permission', 'Run this command?', st, pv.id, [command, actions], [ids.command], s);
+    return promptCard('permission', 'Run this command?', st, pv, [command, actions], [ids.command], s);
   }
 
   // The card for a held prompt, or null (none, malformed, or answered).
@@ -495,13 +505,14 @@
   // The bar with "5/7 Animations" and the chip, as on the list card (or the
   // chip or "Working" alone), then every plan step (a checked box when
   // done, a spinner for the active one, an empty box when still to do), or
-  // "No plan yet".
-  function planSection(s, f) {
+  // "No plan yet". With a prompt card above it (`cardShown`) the chip is
+  // left out: the card already says the session needs you.
+  function planSection(s, f, cardShown) {
     const box = el('div', 'sv-plan');
     if (window.HuddleProgress.showsBar(s.plan, f.status) && f.bar) {
-      box.append(progressBlock(s.plan, f.bar, f.color, CHIPS[f.kind], f.kind));
+      box.append(progressBlock(s.plan, f.bar, f.color, cardShown ? null : CHIPS[f.kind], f.kind));
     } else {
-      const tag = tagLine(f.kind);
+      const tag = tagLine(f.kind, cardShown);
       if (tag) box.append(tag);
     }
     const rows = window.HuddleProgress.planRows(s.plan);
@@ -554,7 +565,7 @@
     const card = s.prompt ? renderPrompt(s) : null;
     sessionView.replaceChildren(top, head);
     if (card) sessionView.append(card);
-    sessionView.append(planSection(s, f));
+    sessionView.append(planSection(s, f, !!card));
     return card ? s.prompt.id : null;
   }
 
@@ -779,17 +790,46 @@
 
   // While a pointer is down on the list or the session view, snapshots wait
   // so the pressed button stays the same element until the click lands.
+  // `pressed` is any press anywhere in the window, for the Escape key.
+  let pressed = false;
   function release() {
+    pressed = false;
     hold.up();
     // Deferred so the click that follows pointerup fires on the old button first.
     setTimeout(hold.flush, 0);
   }
+  window.addEventListener(
+    'pointerdown',
+    () => {
+      pressed = true;
+    },
+    true,
+  );
   list.addEventListener('pointerdown', () => hold.down());
   sessionView.addEventListener('pointerdown', () => hold.down());
   window.addEventListener('pointerup', release);
   window.addEventListener('pointercancel', release);
   window.addEventListener('blur', release);
   document.documentElement.addEventListener('pointerleave', release);
+
+  // Escape in the session view goes back to the list, like the back button
+  // (keyboard only: not in a text-like control, never during a press).
+  document.addEventListener('keydown', (ev) => {
+    const go = window.HuddleView.escapeGoesBack({
+      key: ev.key,
+      ctrlKey: ev.ctrlKey,
+      altKey: ev.altKey,
+      metaKey: ev.metaKey,
+      shiftKey: ev.shiftKey,
+      isComposing: ev.isComposing,
+      target: document.activeElement,
+      view: collapsed ? 'list' : view.current().kind,
+      pointerDown: pressed || hold.isHeld(),
+    });
+    if (!go) return;
+    ev.preventDefault();
+    goBack(true);
+  });
 
   // Dragging the collapsed pill. The pill is a button, so an app-region drag
   // area would swallow its click; instead the pointer's offset in screen

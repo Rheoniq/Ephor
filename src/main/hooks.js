@@ -15,7 +15,8 @@ const { parseHook } = require('./prompts');
 
 const HOST = '127.0.0.1';
 const HOOK_PATH = '/hook';
-const DEFAULT_HOLD_MS = 15000;
+// Only a fallback: main always passes holdMs (the holdSeconds setting).
+const DEFAULT_HOLD_MS = 60000;
 const DEFAULT_MAX_BODY = 64 * 1024;
 // Node's limits for receiving a request (they end only the receiving, not a
 // held response) and for open connections. A connection past the limit is
@@ -352,4 +353,4 @@ function createHookServer(options) {
   return { start, stop, resolve, cancelSession, address };
 }
 
-module.exports = { createHookServer, REQUEST_TIMEOUT_MS, HEADERS_TIMEOUT_MS, MAX_CONNECTIONS };
+module.exports = { createHookServer, DEFAULT_HOLD_MS, REQUEST_TIMEOUT_MS, HEADERS_TIMEOUT_MS, MAX_CONNECTIONS };

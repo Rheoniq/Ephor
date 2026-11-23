@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const net = require('node:net');
 const { EventEmitter, once } = require('node:events');
-const { createHookServer } = require('../src/main/hooks');
+const { createHookServer, DEFAULT_HOLD_MS } = require('../src/main/hooks');
 const { promptView, matchBuddy } = require('../src/main/answering');
 
 const TOKEN = 'a1'.repeat(32);
@@ -556,4 +556,8 @@ test('stop answers pending prompts with 204, calls onCancel and closes', async (
   assert.equal(hooks.address(), null);
   await assert.rejects(send(port, { body: permissionBody() }), { code: 'ECONNREFUSED' });
   await hooks.stop();
+});
+
+test('the fallback hold without holdMs is 60 s, the holdSeconds default', () => {
+  assert.equal(DEFAULT_HOLD_MS, 60000);
 });

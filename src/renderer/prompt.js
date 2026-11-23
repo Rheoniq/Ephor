@@ -119,7 +119,7 @@
     }
 
     function openQuestion() {
-      return prompt && prompt.kind === 'ask' && !answered && settled() ? prompt.questions[index] : null;
+      return prompt && prompt.kind === 'ask' && !answered && !released && settled() ? prompt.questions[index] : null;
     }
 
     function hasLabel(q, label) {
@@ -169,7 +169,8 @@
     }
 
     function openPermission() {
-      return !!prompt && prompt.kind === 'permission' && !answered;
+      // A released prompt is inert: main no longer holds it.
+      return !!prompt && prompt.kind === 'permission' && !answered && !released;
     }
 
     function confirmPending() {
@@ -204,8 +205,9 @@
     // "Answer in <app>": true once per prompt, for an unanswered card that is
     // MIN_AGE_MS old (the same guard as the option buttons, so a stray click
     // right after the card appears neither frees the prompt nor raises
-    // another app). The caller then asks main to release it; the card stays
-    // until the next snapshot drops it.
+    // another app). The caller then asks main to release it. From then on the
+    // card is inert (no answer, toggle, arm or deny goes through) until the
+    // next snapshot drops it.
     function release() {
       if (!prompt || answered || released || !settled()) return false;
       released = true;

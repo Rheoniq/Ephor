@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createViewState, cardKind } = require('../src/renderer/view');
+const { createViewState, cardKind, escapeGoesBack } = require('../src/renderer/view');
 
 // Snapshot sessions as the view state needs them: an id, an optional prompt
 // and a status.
@@ -223,4 +223,49 @@ test('cardKind: needs you wins over finished and busy; then finished; then the s
   for (const odd of [{ status: 'weird' }, { status: 7 }, {}, null, undefined]) {
     assert.equal(cardKind(odd, false), 'idle', JSON.stringify(odd));
   }
+});
+
+// A keydown as escapeGoesBack reads it: the key, the modifiers, IME
+// composition, the focused element's tag, type and editability, the view
+// and whether a pointer is pressed.
+function esc(extra) {
+  return { key: 'Escape', view: 'session', pointerDown: false, target: { tagName: 'BUTTON' }, ...extra };
+}
+
+test('escapeGoesBack: Escape in the session view goes back', () => {
+  assert.equal(escapeGoesBack(esc()), true);
+  assert.equal(escapeGoesBack(esc({ target: null })), true, 'focus on nothing');
+  assert.equal(escapeGoesBack(esc({ target: { tagName: 'BODY' } })), true);
+  assert.equal(escapeGoesBack(esc({ target: { tagName: 'INPUT', type: 'checkbox' } })), true);
+});
+
+test('escapeGoesBack: not on the list, not for other keys, not with a modifier or while composing', () => {
+  assert.equal(escapeGoesBack(esc({ view: 'list' })), false);
+  assert.equal(escapeGoesBack(esc({ key: 'Esc' })), false);
+  assert.equal(escapeGoesBack(esc({ key: 'Backspace' })), false);
+  for (const m of ['ctrlKey', 'altKey', 'metaKey', 'shiftKey']) {
+    assert.equal(escapeGoesBack(esc({ [m]: true })), false, m);
+  }
+  assert.equal(escapeGoesBack(esc({ isComposing: true })), false);
+});
+
+test('escapeGoesBack: never during a pointer press', () => {
+  assert.equal(escapeGoesBack(esc({ pointerDown: true })), false);
+});
+
+test('escapeGoesBack: ignored while a text-like control has focus', () => {
+  for (const target of [
+    { tagName: 'TEXTAREA' },
+    { tagName: 'SELECT' },
+    { tagName: 'INPUT' },
+    { tagName: 'INPUT', type: 'text' },
+    { tagName: 'INPUT', type: 'search' },
+    { tagName: 'DIV', isContentEditable: true },
+  ]) {
+    assert.equal(escapeGoesBack(esc({ target })), false, JSON.stringify(target));
+  }
+});
+
+test('escapeGoesBack: junk input is false', () => {
+  for (const junk of [undefined, null, 'Escape', 7, [], {}]) assert.equal(escapeGoesBack(junk), false);
 });

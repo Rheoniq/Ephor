@@ -575,3 +575,45 @@ test('shownAgain with no prompt does nothing', () => {
   const st = createPromptState();
   assert.equal(st.shownAgain(), false);
 });
+
+test('a released ask is inert: no answer, toggle or Done goes through', () => {
+  const { st, settle } = make();
+  st.show(ask('a1', [question('Pick?', ['A', 'B'])]));
+  settle();
+  assert.equal(st.release(), true);
+  assert.equal(st.answerQuestion('A').done, false);
+  assert.equal(st.current().answered, false);
+  st.show(ask('a2', [question('Many?', ['A', 'B'], true)]));
+  settle();
+  assert.equal(st.toggleOption('A'), true);
+  assert.equal(st.release(), true);
+  assert.equal(st.toggleOption('B'), false);
+  assert.equal(st.finishMulti().done, false);
+  assert.deepEqual(st.current().chosen, ['A']);
+});
+
+test('a released permission is inert: an armed Allow ends, no Allow or Deny goes through', () => {
+  const { st, settle, tick } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.current().armed, true);
+  tick(MIN_CONFIRM_MS);
+  assert.equal(st.release(), true);
+  assert.equal(st.current().armed, false, 'no stale Confirm allow');
+  assert.equal(st.confirmPending(), false);
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.current().armed, false);
+  assert.equal(st.deny(), false);
+  assert.equal(st.current().answered, false);
+});
+
+test('a refused answer does not undo a release', () => {
+  const { st, settle } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.release(), true);
+  st.refused();
+  assert.equal(st.current().released, true);
+  assert.equal(st.deny(), false);
+});
