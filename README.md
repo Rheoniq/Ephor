@@ -19,7 +19,27 @@ A session is shown only when it is:
 - finished and not yet looked at, or
 - holding a prompt.
 
-Plain idle sessions are never shown. "Finished" means the session went from busy or waiting to idle while Huddle ran. It clears when you open the session with the arrow (a successful open), when you dismiss it, or when the session is busy or waiting again. A session that is already idle when Huddle starts is never "finished".
+Plain idle sessions are never shown. "Finished" means the session went from busy or waiting to idle, with no background agents still running, while Huddle ran. It clears when you open the session with the arrow (a successful open), when you dismiss it, or when the session is busy or waiting again. A session that is already idle when Huddle starts is never "finished". A session whose background agents still run counts as busy and reads "Working" (see [Working while agents run](#working-while-agents-run)).
+
+## Working while agents run
+
+A session can start background agents and end its own turn while they run. Claude Code's registry then says idle, but the work is not done: the agents report back later and the session usually picks up their results. Huddle shows such a session as busy, with "Working" (or its bar) and never "Finished", until its agents are done. It gets no "finished" toast while they run.
+
+How Huddle sees it:
+
+- It reads the session's transcript under `~/.claude/projects/` for the records Claude Code writes there: a launch record for each background agent (and a resume record when an agent is sent a new message), and a completion record when the agent reports back. A launch or resume counts the agent as running; its completion record counts it as done. An interim report that the agent still waits on its own background work does not count as done.
+- A liveness guard: a running agent counts only while its own transcript (`<session>/subagents/agent-<id>.jsonl`) was written within the last 45 minutes, or while its launch is less than 2 minutes old. So an agent that stopped without reporting back stops counting.
+- Only sessions the registry calls idle are read. The first read covers the last 8 MiB of the transcript; later reads go on from where the last one stopped.
+- When the last agent is done and the session does not start working again, "Finished" (and its toast) appears about 6 seconds later: the session must read idle with no running agents for 6 seconds in a row. This keeps a session whose parent wakes up to read the results from flashing "Finished" in between.
+
+Limits:
+
+- A live agent whose own transcript stays silent for more than 45 minutes (one long tool call, or waiting on its own background work) stops counting. Its session can then show "Finished" early, and a second time later, when the agent reports back and the session works and ends again.
+- An agent that never reports back (stopped, or its process gone) keeps its session "Working" for up to 45 minutes after its own transcript was last written.
+- A launch further than 8 MiB from the end of the transcript when Huddle starts is not seen.
+- A continued session may carry its predecessor's launch records in its transcript. The liveness guard limits this to a brief false "Working" at most.
+- Background shell tasks (a command run in the background) are not counted; only agents are.
+- The launch and completion records are Claude Code's undocumented transcript format, like the plan. If it changes, sessions with running agents read idle again (and may show "Finished" early); nothing else breaks.
 
 ## Progress view
 
@@ -38,7 +58,7 @@ What feeds it:
 
 The panel shows one of two views.
 
-**List:** one card per session with its avatar, name, host badge, bar or status tag, and "Question waiting" while a prompt is held. A session that waits for an answer while Huddle holds no card for it (released, timed out, closed by Claude Code, or terminal answering off) shows "Answer waiting in <host>" instead (see the handover notice in the session view below). The arrow (open in Claude Desktop, or "Open in <host>") and the x (dismiss) sit stacked on the right edge. While a prompt is held, the arrow releases it first, then opens the app: its tooltip reads "Release the question and open <host>" (see [Answering from the panel](#answering-from-the-panel)). Prompt cards never show in the list.
+**List:** one card per session with its avatar, name, host badge, bar or status tag, and "Question waiting" while a prompt is held. A session that waits for an answer while Huddle holds no card for it shows "Answer waiting in <host>" instead, and its arrow's tooltip reads "Open <host> to answer" (see the handover notice in the session view below). The arrow (open in Claude Desktop, or "Open in <host>") and the x (dismiss) sit stacked on the right edge. While a prompt is held, the arrow releases it first, then opens the app: its tooltip reads "Release the question and open <host>" (see [Answering from the panel](#answering-from-the-panel)). Prompt cards never show in the list.
 
 **Session view:** click a card to show only that session:
 
@@ -51,10 +71,13 @@ The panel shows one of two views.
 Moving between them:
 
 - "All sessions" or Escape goes back to the list. Escape works from the keyboard only: not while a text field has focus, and not during a mouse press.
-- After the last prompt of the open session is answered or released, the view goes back to the list after 0.7 seconds, unless a new prompt for that session comes first.
+- After the last prompt of the open session is answered or released, the view goes back to the list after 0.7 seconds, unless a new prompt for that session comes first. While the session still waits for an answer without a card (a released question, a hold that ran out or was closed by Claude Code), the view stays on the session with its handover notice; it goes back 0.7 seconds after the session stops waiting.
 - The view never switches to another session by itself. A prompt on a session you are not looking at marks its card "Needs you" in the list and, while another session is open, shows as the badge on the back arrow.
 - The view goes back to the list when the open session leaves the panel (it ends or is dismissed).
-- **Handover notice:** a session that waits for an answer while Huddle holds no card for it (the question was released, the hold ran out, Claude Code closed the connection, or terminal answering is off) shows a notice where the card would be: the kicker "Waiting for your answer", "This question is open in <host>. Huddle is no longer holding it.", and a button "Open <host>" ("Claude Desktop", the terminal's host, or "the terminal" while it is not known). The button opens the app like the arrow, and ignores clicks in the first 500 ms after the notice appears. The notice never shows while a card is held, and goes when the session stops waiting. "No plan yet" stays below it.
+- **Handover notice:** a session that waits for an answer while Huddle holds no card for it shows a notice where the card would be: the kicker "Waiting for your answer", "This question is open in <host>. Huddle is not holding it.", and a button "Open <host>" ("Claude Desktop", the terminal's host, or "the terminal" while it is not known). The button opens the app like the arrow, and ignores clicks in the first 500 ms after the notice appears. The notice never shows while a card is held, and goes when the session stops waiting. "No plan yet" stays below it. Huddle holds no card when:
+  - the question was released ("Answer in <app>" or the arrow), or its hold ran out;
+  - Claude Code closed the connection early (a hook timeout shorter than the hold);
+  - Huddle never held it: terminal answering is off for a terminal session, the hooks are not set up, it is a Write, Edit, MCP or other non-shell approval, it is a prompt the card cannot show in full (more than 4 questions or options, repeated questions or labels, a command outside the command rule), it is a second prompt while the session already has one, or it came while the panel was hidden or quiet mode was on.
 
 The last-command line ("Last command requested") is gone.
 
@@ -81,7 +104,7 @@ Claude Code sessions running in Zed, VS Code, Cursor, JetBrains or any terminal 
 
 ## Toasts
 
-A small window says "needs you" when a session starts waiting and "finished" when a busy session goes idle (not when a waiting session goes idle).
+A small window says "needs you" when a session starts waiting and "finished" when a busy session goes idle with no background agents still running (not when a waiting session goes idle). While its agents run, a session counts as busy and gets no "finished" toast; after its last agent is done, the toast comes about 6 seconds later (see [Working while agents run](#working-while-agents-run)).
 
 - It shows only while you cannot see the panel: hidden (hotkey, tray or Hide button) or collapsed to the pill. Opening the panel clears any toast showing or waiting.
 - With the panel open, the session's card in the list is the notification. In the session view of another session, the badge on the back arrow is the notification (see [List and session view](#list-and-session-view)); no toast shows then either.
@@ -90,7 +113,7 @@ A small window says "needs you" when a session starts waiting and "finished" whe
 - It sits below the panel or pill, or above it when there is no room below. While the panel is hidden, it sits in the top-right corner of the display.
 - Quiet mode silences toasts. Dismissed sessions get none.
 - The one "port in use" notice is not a card, so it shows with the panel open too.
-- A second notice, once per run: "Claude Code closed a question after N s. Raise the hook timeout above the hold." It shows when Claude Code closed a held question at least 2 seconds before the hold would have ended (see the hook timeout under [Answering from the panel](#answering-from-the-panel)).
+- A second notice, once per run: "Claude Code closed a question after N s. Raise the hook timeout above the hold." It shows when Claude Code closed the connection of a held question at least 2 seconds before the hold would have ended, and a refresh within 3 seconds then finds that session waiting for the answer without a card (see the hook timeout under [Answering from the panel](#answering-from-the-panel)). A hold Huddle ended itself never counts: an answer, a release, hiding the panel, collapsing it by hand, quiet mode, a dismissal, the app answered first, terminal answering turned off, a crashed panel page, the hold running out, or quitting. Like the port notice it shows with the panel open too. Quiet mode or a dismissed session suppresses it without using up the once, so the next early close can show it.
 
 ## Look
 
@@ -106,8 +129,8 @@ When a session raises a prompt that Huddle can handle, its list card reads "Need
 
 - **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use "Answer in <app>" or the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
 - **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
-- **The arrow** on a session with a held prompt does the same as this button: it releases the question first, then opens the app, with the same 500 ms guard. Its tooltip and spoken label then read "Release the question and open <host>". With no held prompt it only opens the app.
 - **"Answer in <app>"** ("Answer in Claude Desktop", "Answer in Zed", or "Answer in the terminal" while the host is not known): releases the question at once, so the app's own prompt appears, and brings that app to the front. The release stands even if the app cannot be opened. The card turns inert at once and goes with the next refresh.
+- **The arrow** on a session with a held prompt does the same as "Answer in <app>": it releases the question first, then opens the app, with the same 500 ms guard. Its tooltip and spoken label then read "Release the question and open <host>". If the hold ended just before the click (nothing left to release), the arrow simply opens the app. With no held prompt it only opens the app.
 - Clicks in the first 500 ms after a card or a question appears are ignored, the release button included, so a stray double-click cannot answer.
 
 A command card appears only when all of this holds:
@@ -134,7 +157,8 @@ Terminal sessions:
 Desktop stays the fallback for everything:
 
 - A prompt is held at most `holdSeconds` (60 seconds by default). Then the card goes away and Desktop shows its normal prompt.
-- The hook `timeout` must be longer than the hold, and BOTH Huddle hook entries need it. The recommended pairing is `"timeout": 300` with `holdSeconds` 290. A long hold keeps the app's own prompt hidden for that long, unless you release the question with the arrow or the "Answer in <app>" button. In `~/.claude/settings.json` change `"timeout": 20` to `"timeout": 70` in both Huddle `http` hook entries: the `PermissionRequest` entry and the `PreToolUse` entry with `"matcher": "AskUserQuestion"`. If you raise `holdSeconds`, the timeout must stay larger than it, for example `310` for `300`. You edit the file yourself; Huddle never does. If one entry keeps a shorter timeout than the hold, Claude Code closes that connection early: the card vanishes after the shorter time while the question stays open in the app. Huddle then shows the handover notice, and once per run a notice toast: "Claude Code closed a question after N s. Raise the hook timeout above the hold." The countdown on the card can also be wrong.
+- The hook `timeout` must be longer than the hold, in BOTH Huddle `http` hook entries in `~/.claude/settings.json`: the `PermissionRequest` entry and the `PreToolUse` entry with `"matcher": "AskUserQuestion"`. The default pairing is `"timeout": 70` with `holdSeconds` 60, as in `hook-settings.json`; an older setup with `"timeout": 20` needs `70` in both entries. A longer hold works the same way as long as both timeouts stay above it, for example `"timeout": 300` with `holdSeconds` 290. A long hold keeps the app's own prompt hidden for that long, unless you release the question with "Answer in <app>" or the arrow. You edit the file yourself; Huddle never does.
+- If one entry keeps a shorter timeout than the hold, Claude Code closes that connection early: the card vanishes after the shorter time while the question stays open in the app. Huddle then shows the handover notice and, once per run, the notice toast "Claude Code closed a question after N s. Raise the hook timeout above the hold." (see [Toasts](#toasts)). The countdown on the card can also be wrong.
 - Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A crashed or unresponsive panel page ends all holds at once (detection of a hung page is not verified live).
 - Hiding the panel, collapsing it by hand, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
 - A crashed panel page is reloaded after a second. A crash loop (more than 3 crashes in 60 seconds) leaves the panel blank and answering off until Huddle is restarted.
@@ -275,6 +299,10 @@ The hook gate ran before the `Origin` and `Host` checks were added: the server n
 - A real arrow click from the panel on a terminal session (the window lookup and focus were checked from a script only).
 - The Windows 11 default-terminal case (a shell started from Start).
 - The badge and the arrow on managed machines with endpoint protection (EDR), which may block or slow the PowerShell calls.
+- The arrow's release against a live hook: that the app's own prompt appears and the app comes forward, and the plain open when the hold ended just before the click (checked in the demo only).
+- The hook timeout notice against a real early close (a hook timeout shorter than the hold): that it shows once, and that holds Huddle ends itself never show it (checked against the hook server in tests only).
+- The handover notice after a real hook timeout: that the session waits in the registry while the question is open in the app, so the session view keeps the notice.
+- Sessions with running agents on the live path: real sessions in the panel (only the demo and the reader over a copy of real transcript data were run), the 6 second settle against the real registry timing, and the transcript records it reads, which are undocumented.
 
 ## Privacy
 
