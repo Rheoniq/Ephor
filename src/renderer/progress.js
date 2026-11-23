@@ -87,7 +87,7 @@
   // status ('busy', 'waiting', 'idle' or 'finished'). A busy session whose
   // plan is complete is working past its plan (a follow-up that made no new
   // plan), so it shows its Working tag instead of a full bar reading Done;
-  // the expanded checklist still shows the plan. No plan, no bar.
+  // the session view's checklist still shows the plan. No plan, no bar.
   function showsBar(plan, status) {
     if (!isPlan(plan)) return false;
     return !(status === 'busy' && isComplete(plan));

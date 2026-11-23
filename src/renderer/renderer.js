@@ -3,24 +3,33 @@
 // Huddle panel renderer. Session names, plan items and commands come from
 // local files and prompt text comes from hook input: all of it is untrusted
 // and only ever set with textContent, never innerHTML.
+//
+// Two views (view.js): the list of sessions, and one session with a back
+// arrow, its prompt card and its plan. A prompt card is shown only in the
+// session view; the list marks the session "Needs you".
 
 (function () {
-  const STATUS = {
-    busy: { label: 'Busy' },
-    waiting: { label: 'Waiting for you' },
-    idle: { label: 'Idle' },
-  };
-  // An idle session that just finished and was not looked at yet.
-  const FINISHED = { label: 'Finished' };
-  // Short visible tags under the name of a session without a plan; screen
-  // readers get the label instead.
-  const TAGS = { busy: 'Working', waiting: 'Needs you', finished: 'Finished' };
-  // The chip on the plan label line. Busy has none: the bar says enough.
-  const CHIPS = { waiting: 'Needs you', finished: 'Finished' };
+  // Words a screen reader hears before a session's name, per card kind
+  // (HuddleView.cardKind).
+  const SPOKEN = { 'needs-you': 'Needs you', finished: 'Finished', busy: 'Busy', idle: 'Idle' };
+  // The chip on a card's status line. Busy has none: the bar says enough.
+  const CHIPS = { 'needs-you': 'Needs you', finished: 'Finished' };
+  // After the open session's last prompt is answered or released, the view
+  // goes back to the list after this long, unless a new prompt comes first.
+  const RETURN_MS = 700;
   const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // Outline icons on a 24 px grid, drawn with the stroke in style.css.
+  const ICONS = {
+    'arrow-right': ['M5 12h14', 'M13 18l6-6', 'M13 6l6 6'],
+    'arrow-left': ['M5 12h14', 'M5 12l6 6', 'M5 12l6-6'],
+    x: ['M18 6 6 18', 'M6 6l12 12'],
+    external: ['M12 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6', 'M11 13l9-9', 'M15 4h5v5'],
+  };
 
   const panel = document.getElementById('panel');
   const list = document.getElementById('buddies');
+  const sessionView = document.getElementById('session-view');
   const count = document.getElementById('count');
   const collapseBtn = document.getElementById('collapse');
   const hideBtn = document.getElementById('hide');
@@ -28,20 +37,27 @@
   const pill = document.getElementById('pill');
   const pillCount = document.getElementById('pill-count');
   const pillAlert = document.getElementById('pill-alert');
-  const expanded = new Set(); // sessionIds whose plan checklist is open
+  const view = window.HuddleView.createViewState();
   const promptStates = new Map(); // prompt id -> HuddlePrompt state
-  // Prompt id -> performance.now() when this page first showed it. The line
-  // that drains over the hold runs from there, across re-renders.
+  // Prompt id -> performance.now() when a snapshot first brought it. The
+  // countdown and the line that drains over the hold run from there, also
+  // when the card itself is first seen later (its session opened later).
   const promptSeen = new Map();
   // Prompt id -> the hold in ms from the snapshot's holdMs (HuddlePrompt
-  // holdMsOf), for the drain line's duration and the hint.
+  // holdMsOf), for the countdown and the drain line.
   const promptHold = new Map();
   let sessions = [];
-  // Avatar colors (task 3): sessionId -> palette index, so no two visible
-  // sessions share a color. Updated on each render by HuddleColors.
+  // Avatar colors: sessionId -> palette index, so no two visible sessions
+  // share a color. Updated on each render by HuddleColors.
   let colorOf = new Map();
   let collapsed = false; // set by main through onUiState
   let armTimer = null;
+  let returnTimer = null;
+  let returnFor = null; // the session the pending return is for
+  let countdownTimer = null;
+  // The prompt id whose card the last render showed, or null. A card that
+  // was not on screen in the last render comes back with a new minimum age.
+  let lastCardId = null;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -56,8 +72,26 @@
     return node;
   }
 
+  function icon(name, size) {
+    const px = String(size || 16);
+    const node = svg('svg', {
+      class: `icon icon-${name}`,
+      viewBox: '0 0 24 24',
+      width: px,
+      height: px,
+      'aria-hidden': 'true',
+      focusable: 'false',
+    });
+    for (const d of ICONS[name]) node.append(svg('path', { d }));
+    return node;
+  }
+
   function str(v) {
     return typeof v === 'string' ? v : '';
+  }
+
+  function sessionById(id) {
+    return sessions.find((s) => s && str(s.sessionId) === id) || null;
   }
 
   // The session's avatar color, as createAvatar picks it.
@@ -65,6 +99,23 @@
     const { PALETTE, colorIndex } = window.HuddleAvatar;
     const idx = colorOf.get(id);
     return PALETTE[Number.isInteger(idx) && idx >= 0 && idx < PALETTE.length ? idx : colorIndex(id)];
+  }
+
+  // What every view needs to know about one session.
+  function facts(s, needs) {
+    const id = str(s.sessionId);
+    const status = ['busy', 'waiting', 'idle'].includes(s.status) ? s.status : 'idle';
+    const isTerminal = s.source === 'terminal';
+    return {
+      id,
+      status,
+      name: str(s.name) || 'Untitled session',
+      kind: window.HuddleView.cardKind(s, needs.has(id)),
+      color: colorFor(id),
+      bar: window.HuddleProgress.barLabel(s.plan),
+      isTerminal,
+      host: isTerminal ? str(s.host) : '',
+    };
   }
 
   // --- Marks: drawn in SVG, colored by class or by the avatar color --------
@@ -109,182 +160,40 @@
     return node;
   }
 
-  // --- Prompt cards ---------------------------------------------------------
+  // --- Shared pieces ---------------------------------------------------------
 
-  function promptStateFor(prompt) {
-    if (!prompt || typeof prompt.id !== 'string') return null;
-    let st = promptStates.get(prompt.id);
-    if (!st) {
-      st = window.HuddlePrompt.createPromptState();
-      if (!st.show(prompt)) return null;
-      promptStates.set(prompt.id, st);
-      if (!promptSeen.has(prompt.id)) promptSeen.set(prompt.id, performance.now());
+  // The arrow that opens the session's app: Claude Desktop, or for a
+  // terminal session the window that hosts it. With the host not known yet
+  // it stays enabled and main looks it up on click.
+  function openButton(s, f) {
+    const open = el('button', 'icon-btn open');
+    open.type = 'button';
+    open.dataset.role = 'open';
+    let openTip = 'Open in Claude Desktop';
+    let openLabel = `Open ${f.name} in Claude Desktop`;
+    if (f.isTerminal && f.host) {
+      openTip = `Open in ${f.host}`;
+      openLabel = `Open ${f.name} in ${f.host}`;
+    } else if (f.isTerminal) {
+      openTip = 'Open the terminal window';
+      openLabel = `Open the terminal window of ${f.name}`;
     }
-    return st;
-  }
-
-  function promptButton(text, role, className) {
-    const b = el('button', className ? `prompt-btn ${className}` : 'prompt-btn', text);
-    b.type = 'button';
-    b.dataset.role = role;
-    return b;
-  }
-
-  // The frame every prompt card shares: a small kicker naming where it comes
-  // from, then the card's own content, then the hint (which also says the
-  // card closes after the hold, in words everyone gets) and the line
-  // that drains over the hold (decorative: hidden from screen readers, and
-  // still when motion is reduced). The group is named by the kicker and
-  // described by the elements whose ids are in describedBy (the question or
-  // the command); all ids come from the prompt id, so they hold across
-  // renders. The hint names the terminal for a terminal session.
-  function promptCard(kind, kicker, id, content, describedBy, source) {
-    const card = el('div', `prompt ${kind}`);
-    const kick = el('p', 'prompt-kicker', kicker);
-    kick.id = window.HuddlePrompt.promptDomIds(id).kicker;
-    kick.title = kicker;
-    card.setAttribute('role', 'group');
-    card.setAttribute('aria-labelledby', kick.id);
-    card.setAttribute('aria-describedby', describedBy.join(' '));
-    const holdMs = promptHold.has(id) ? promptHold.get(id) : window.HuddlePrompt.holdMsOf(null);
-    const drain = el('span', 'prompt-drain');
-    drain.setAttribute('aria-hidden', 'true');
-    drain.dataset.promptId = id;
-    drain.dataset.holdMs = String(holdMs);
-    // The drain runs over the hold from the payload (style.css reads
-    // --hold-ms). Set through the CSSOM, which the CSP allows.
-    drain.style.setProperty('--hold-ms', `${holdMs}ms`);
-    const hint = el('p', 'prompt-hint', window.HuddlePrompt.promptHint(source, holdMs));
-    card.append(kick, ...content, hint, drain);
-    return card;
-  }
-
-  // Frees a held prompt without answering it, so it can be answered in the
-  // session's own app, which main then opens. Main ends the hold and the
-  // next snapshot drops the card. (The button that calls this comes with the
-  // session view.)
-  function releasePrompt(id) {
-    window.huddle.release(id).catch(() => 'failed');
-  }
-
-  function sendAnswers(id, result) {
-    if (result.done) window.huddle.answer({ id, kind: 'ask', answers: result.answers });
-    render();
-  }
-
-  // One question at a time; the answers go to main together after the last.
-  // Each option is a full-width button with its label and, below it, its
-  // description. Multi-select options carry a check box and end with Done.
-  function renderAsk(st, view, sessionName, source) {
-    const q = view.question;
-    const multi = q.multiSelect === true;
-    const options = el('div', 'prompt-options');
-    q.options.forEach((o, j) => {
-      const label = str(o.label);
-      const description = str(o.description);
-      const b = promptButton(undefined, `opt-${j}`, 'option');
-      const text = el('span', 'opt-text');
-      text.append(el('span', 'opt-label', label));
-      if (description) text.append(el('span', 'opt-desc', description));
-      if (multi) {
-        const on = view.chosen.includes(label);
-        b.classList.toggle('chosen', on);
-        b.setAttribute('aria-pressed', String(on));
-        b.append(on ? checkedBox('opt-mark') : emptyBox('opt-mark'));
-        b.addEventListener('click', () => {
-          st.toggleOption(label);
-          render();
-        });
-      } else {
-        b.addEventListener('click', () => sendAnswers(view.id, st.answerQuestion(label)));
-      }
-      b.append(text);
-      options.append(b);
+    open.setAttribute('aria-label', openLabel);
+    open.title = openTip;
+    open.append(icon('arrow-right'));
+    open.addEventListener('click', () => {
+      const target = f.isTerminal
+        ? { kind: 'terminal', sessionId: f.id }
+        : { kind: 'desktop', hostSessionId: str(s.hostSessionId) };
+      window.huddle.open(target).catch(() => {});
     });
-    if (multi) {
-      const done = promptButton('Done', 'done', 'done primary');
-      done.disabled = view.chosen.length === 0;
-      done.addEventListener('click', () => sendAnswers(view.id, st.finishMulti()));
-      options.append(done);
-    }
-    const ids = window.HuddlePrompt.promptDomIds(view.id);
-    const text = el('p', 'prompt-text', str(q.question));
-    text.id = ids.text;
-    return promptCard('ask', `Question from ${sessionName}`, view.id, [text, options], [ids.text], source);
+    return open;
   }
 
-  // Renders now, or once no pointer is down, so a press keeps its button.
-  function renderWhenFree() {
-    if (hold.isHeld()) setTimeout(renderWhenFree, 100);
-    else render();
+  // The program that hosts a terminal session (Zed, VS Code), or null.
+  function hostBadge(f) {
+    return f.host ? el('span', 'host-badge', f.host) : null;
   }
-
-  // Re-render when a confirm click runs out, so "Confirm allow" turns back
-  // into "Allow".
-  function scheduleArmExpiry() {
-    clearTimeout(armTimer);
-    armTimer = setTimeout(renderWhenFree, window.HuddlePrompt.ARM_MS + 50);
-  }
-
-  // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
-  // Deny is one click. The whole command is shown, wrapped, with no scroll
-  // box of its own.
-  function renderPermission(st, view, sessionName, source) {
-    const command = el('pre', 'prompt-command', str(view.command));
-    const allow = promptButton(
-      view.armed ? 'Confirm allow' : 'Allow',
-      'allow',
-      view.armed ? 'allow primary armed' : 'allow primary',
-    );
-    allow.addEventListener('click', () => {
-      const wasArmed = st.confirmPending();
-      if (st.armAllow() === 'send') {
-        window.huddle.answer({ id: view.id, kind: 'permission', allow: true });
-      } else if (!wasArmed && st.confirmPending()) {
-        // A fresh arm: main records it too and takes the allow only after it.
-        window.huddle.arm(view.id);
-        scheduleArmExpiry();
-      }
-      render();
-    });
-    const deny = promptButton('Deny', 'deny', 'deny');
-    deny.addEventListener('click', () => {
-      if (st.deny()) window.huddle.answer({ id: view.id, kind: 'permission', allow: false });
-      render();
-    });
-    const actions = el('div', 'prompt-actions');
-    actions.append(deny, allow);
-    const tool = str(view.toolName) || 'Shell';
-    const ids = window.HuddlePrompt.promptDomIds(view.id);
-    const text = el('p', 'prompt-text', 'Run this command?');
-    text.id = ids.text;
-    command.id = ids.command;
-    return promptCard(
-      'permission',
-      `${tool} command from ${sessionName}`,
-      view.id,
-      [text, command, actions],
-      [ids.text, ids.command],
-      source,
-    );
-  }
-
-  // The card for a held prompt, or null (none, malformed, or already answered).
-  // source is the session's ('terminal' or 'desktop'), for the hint.
-  function renderPrompt(prompt, sessionName, source) {
-    const st = promptStateFor(prompt);
-    if (st) promptHold.set(prompt.id, window.HuddlePrompt.holdMsOf(prompt));
-    const view = st && st.current();
-    // An answered card is hidden at once. If main refuses the answer (it
-    // does not fit, or its timing is off), it says so and the card comes
-    // back (onAnswerRefused below).
-    if (!view || view.answered) return null;
-    return view.kind === 'ask'
-      ? renderAsk(st, view, sessionName, source)
-      : renderPermission(st, view, sessionName, source);
-  }
-
-  // --- Plan: the bar under the name and the checklist ------------------------
 
   // A thin track filled to the current step, in the session's color.
   function progressBar(plan, color) {
@@ -305,165 +214,449 @@
     return bar;
   }
 
-  // The status under the name: the plan bar with "5/7 Animations" and a chip
-  // for waiting or finished, or the plain status tag when `label` is null (no
-  // plan, or a busy session past its complete plan: HuddleProgress.showsBar).
-  // Hidden from screen readers: the body button's name says the same, with
-  // the whole phase. Returns null when there is nothing to show.
-  function statusLine(plan, label, kind, color) {
-    if (!label) {
-      const tagText = TAGS[kind];
-      if (!tagText) return null;
-      const tag = el('span', 'state-label', tagText);
-      tag.setAttribute('aria-hidden', 'true');
-      return tag;
-    }
+  // The bar with "5/7 Animations" below it, and the chip when `chip` is set.
+  // Hidden from screen readers: the names around it say the same, with the
+  // whole phase.
+  function progressBlock(plan, label, color, chip, kind) {
     const box = el('span', label.complete ? 'progress complete' : 'progress');
     box.setAttribute('aria-hidden', 'true');
     box.title = label.title;
     const line = el('span', 'progress-line');
     line.append(el('span', 'progress-count', label.count));
     if (label.phase) line.append(el('span', 'progress-phase', label.phase));
-    if (CHIPS[kind]) line.append(el('span', `chip chip-${kind}`, CHIPS[kind]));
+    if (chip) line.append(el('span', `chip chip-${kind}`, chip));
     box.append(progressBar(plan, color), line);
     return box;
   }
 
-  // The expanded view: every plan step (a checked box when done, a spinner
-  // for the active one, an empty box when still to do), or "No plan yet".
-  function renderDetails(s, label, color) {
-    const box = el('div', 'details');
-    const rows = window.HuddleProgress.planRows(s.plan);
-    if (rows.length > 0) {
-      const ol = el('ol', 'plan');
-      ol.setAttribute('aria-label', label ? `Plan, ${label.spoken}` : 'Plan');
-      for (const r of rows) {
-        const item = el('li', r.active ? `plan-item ${r.status} active` : `plan-item ${r.status}`);
-        const mark = r.mark === 'checked' ? checkedBox() : r.mark === 'spinner' ? spinner(color) : emptyBox();
-        const text = el('span', 'plan-text');
-        text.append(el('span', 'sr-only', `${r.spoken}: `), document.createTextNode(r.text));
-        item.append(mark, text);
-        ol.append(item);
-      }
-      box.append(ol);
+  // The line under a name with no bar to show (no plan, or a busy session
+  // past its complete plan): the chip, or "Working" for a busy session.
+  // Hidden from screen readers like the bar. null when there is nothing.
+  function tagLine(kind) {
+    if (CHIPS[kind]) {
+      const line = el('span', 'tag-line');
+      line.setAttribute('aria-hidden', 'true');
+      line.append(el('span', `chip chip-${kind}`, CHIPS[kind]));
+      return line;
     }
-    if (rows.length === 0) box.append(el('p', 'no-plan', 'No plan yet'));
-    return box;
+    if (kind !== 'busy') return null;
+    const tag = el('span', 'state-label', 'Working');
+    tag.setAttribute('aria-hidden', 'true');
+    return tag;
   }
 
-  function renderBuddy(s) {
-    const id = str(s.sessionId);
-    const status = Object.prototype.hasOwnProperty.call(STATUS, s.status) ? s.status : 'idle';
-    const name = str(s.name) || 'Untitled session';
-    const isOpen = expanded.has(id);
-    const isFinished = status === 'idle' && s.finished === true;
-    const label = isFinished ? FINISHED.label : STATUS[status].label;
-    const kind = isFinished ? 'finished' : status;
-    const color = colorFor(id);
-    const bar = window.HuddleProgress.barLabel(s.plan);
+  // --- List view -------------------------------------------------------------
 
-    const li = el('li', isFinished ? `buddy ${status} finished` : `buddy ${status}`);
-    li.dataset.sessionId = id;
-
-    const row = el('div', 'buddy-row');
-
-    // A held prompt sits right under the name, above the status line, so it
-    // is the first thing seen; the status line then moves below the card.
-    const card = s.prompt ? renderPrompt(s.prompt, name, s.source) : null;
-    const line = statusLine(s.plan, window.HuddleProgress.showsBar(s.plan, kind) ? bar : null, kind, color);
+  // One card per session: avatar, name (and host badge), the bar or a tag,
+  // "Question waiting" while a prompt is held, and the open and hide buttons
+  // stacked at the right. The card body opens the session view.
+  function renderBuddy(s, needs) {
+    const f = facts(s, needs);
+    const li = el('li', `buddy ${f.status} kind-${f.kind}`);
+    li.dataset.sessionId = f.id;
 
     const body = el('button', 'buddy-body');
     body.type = 'button';
     body.dataset.role = 'body';
-    body.setAttribute('aria-expanded', String(isOpen));
-    body.title = name;
-    const avatar = window.HuddleAvatar.createAvatar(document, id, status, colorOf.get(id));
+    body.title = f.name;
+    const avatar = window.HuddleAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id));
+
     const nameBox = el('span', 'name-box');
-    // A terminal session shows the program that hosts it (Zed, VS Code) as
-    // a small badge after the name; nothing while it is not known yet.
-    const isTerminal = s.source === 'terminal';
-    const host = isTerminal ? str(s.host) : '';
-    if (host) {
-      const nameLine = el('span', 'name-line');
-      nameLine.append(el('span', 'name', name), el('span', 'host-badge', host));
-      nameBox.append(nameLine);
+    const nameLine = el('span', 'name-line');
+    nameLine.append(el('span', 'name', f.name));
+    const badge = hostBadge(f);
+    if (badge) nameLine.append(badge);
+    nameBox.append(nameLine);
+    // Screen readers hear the state first and the whole plan step last.
+    if (f.bar) nameBox.append(el('span', 'sr-only', `, ${f.bar.spoken}`));
+    if (window.HuddleProgress.showsBar(s.plan, f.status) && f.bar) {
+      nameBox.append(progressBlock(s.plan, f.bar, f.color, CHIPS[f.kind], f.kind));
     } else {
-      nameBox.append(el('span', 'name', name));
+      const tag = tagLine(f.kind);
+      if (tag) nameBox.append(tag);
     }
-    // Screen readers hear the status first and the whole plan step last.
-    if (bar) nameBox.append(el('span', 'sr-only', `, ${bar.spoken}`));
-    if (line && !card) nameBox.append(line);
-    body.append(avatar, el('span', 'sr-only', `${label}: `), nameBox);
-    body.addEventListener('click', () => {
-      if (expanded.has(id)) expanded.delete(id);
-      else expanded.add(id);
-      render();
-    });
-
-    const open = el('button', 'icon-btn open', '→');
-    open.type = 'button';
-    open.dataset.role = 'open';
-    // Terminal sessions: the arrow brings the host window to the front. With
-    // the host not known yet it stays enabled and main looks it up on click.
-    // The label names the session like the desktop one always did.
-    let openTip = 'Open in Claude Desktop';
-    let openLabel = `Open ${name} in Claude Desktop`;
-    if (isTerminal && host) {
-      openTip = `Open in ${host}`;
-      openLabel = `Open ${name} in ${host}`;
-    } else if (isTerminal) {
-      openTip = 'Open the terminal window';
-      openLabel = `Open the terminal window of ${name}`;
+    if (s.prompt) {
+      nameBox.append(el('span', 'sr-only', ', question waiting'));
+      const waiting = el('span', 'waiting-line', 'Question waiting');
+      waiting.setAttribute('aria-hidden', 'true');
+      nameBox.append(waiting);
     }
-    open.setAttribute('aria-label', openLabel);
-    open.title = openTip;
-    open.addEventListener('click', () => {
-      const target = isTerminal
-        ? { kind: 'terminal', sessionId: id }
-        : { kind: 'desktop', hostSessionId: str(s.hostSessionId) };
-      window.huddle.open(target).catch(() => {});
-    });
+    body.append(avatar, el('span', 'sr-only', `${SPOKEN[f.kind]}: `), nameBox);
+    body.addEventListener('click', () => openSession(f.id));
 
-    const dismiss = el('button', 'icon-btn dismiss', '×');
+    const dismiss = el('button', 'icon-btn dismiss');
     dismiss.type = 'button';
     dismiss.dataset.role = 'dismiss';
-    dismiss.setAttribute('aria-label', `Hide ${name} from the panel`);
+    dismiss.setAttribute('aria-label', `Hide ${f.name} from the panel`);
     dismiss.title = 'Hide until new activity';
-    dismiss.addEventListener('click', () => window.huddle.dismiss(id));
+    dismiss.append(icon('x'));
+    dismiss.addEventListener('click', () => window.huddle.dismiss(f.id));
 
     // Open and hide stacked at the right of the row, open on top; the DOM
-    // order keeps the tab order (open, then hide).
+    // order keeps the tab order (body, open, hide).
     const actions = el('div', 'row-actions');
-    actions.append(open, dismiss);
+    actions.append(openButton(s, f), dismiss);
+    const row = el('div', 'buddy-row');
     row.append(body, actions);
     li.append(row);
+    return li;
+  }
 
-    if (card) {
-      li.append(card);
-      if (line) {
-        const after = el('div', 'after-prompt');
-        after.append(line);
-        li.append(after);
+  // --- Prompt cards (session view only) -------------------------------------
+
+  function promptStateFor(prompt) {
+    if (!prompt || typeof prompt.id !== 'string') return null;
+    let st = promptStates.get(prompt.id);
+    if (!st) {
+      st = window.HuddlePrompt.createPromptState();
+      if (!st.show(prompt)) return null;
+      promptStates.set(prompt.id, st);
+    } else if (lastCardId !== prompt.id) {
+      // Back on screen after the list or the pill: maybe under the cursor.
+      st.shownAgain();
+    }
+    return st;
+  }
+
+  function promptButton(text, role, className) {
+    const b = el('button', className ? `prompt-btn ${className}` : 'prompt-btn', text);
+    b.type = 'button';
+    b.dataset.role = role;
+    return b;
+  }
+
+  // Whole seconds left of the hold, as text. The hold starts when a snapshot
+  // first brought the prompt and lasts its holdMs.
+  function countdownFor(id) {
+    const seen = promptSeen.get(id);
+    const elapsed = seen === undefined ? 0 : performance.now() - seen;
+    return window.HuddlePrompt.countdownText(promptHold.get(id), elapsed);
+  }
+
+  // Under the options: "Answer in <app>" (frees the prompt here and opens
+  // the app where it can be answered instead) and the time left of the
+  // hold, then a line that drains over the hold (decorative: hidden from
+  // screen readers and still when motion is reduced; the text is the time
+  // cue, updated at most once a second and never announced).
+  function promptFoot(st, id, s) {
+    const label = window.HuddlePrompt.releaseLabel(s.source, s.host);
+    const releaseBtn = el('button', 'release-btn');
+    releaseBtn.type = 'button';
+    releaseBtn.dataset.role = 'release';
+    releaseBtn.title = 'Hands the question back and opens the app';
+    releaseBtn.append(icon('external', 14), el('span', 'release-text', label));
+    releaseBtn.addEventListener('click', () => {
+      // A click on a card younger than MIN_AGE_MS is ignored, like the
+      // options. The release stands even if the app does not open; the next
+      // snapshot drops the card.
+      if (st.release()) window.huddle.release(id).catch(() => 'failed');
+    });
+    const left = el('span', 'prompt-countdown', countdownFor(id));
+    left.dataset.promptId = id;
+    left.setAttribute('aria-live', 'off');
+    const foot = el('div', 'prompt-foot');
+    foot.append(releaseBtn, left);
+
+    const holdMs = promptHold.has(id) ? promptHold.get(id) : window.HuddlePrompt.holdMsOf(null);
+    const track = el('div', 'prompt-drain-track');
+    track.setAttribute('aria-hidden', 'true');
+    const drain = el('span', 'prompt-drain');
+    drain.dataset.promptId = id;
+    drain.dataset.holdMs = String(holdMs);
+    // The drain runs over the hold from the payload (style.css reads
+    // --hold-ms). Set through the CSSOM, which the CSP allows.
+    drain.style.setProperty('--hold-ms', `${holdMs}ms`);
+    track.append(drain);
+    return [foot, track];
+  }
+
+  // The frame every prompt card shares: the kicker, the card's own content,
+  // then the release row and the drain line. The group is named by the
+  // kicker and described by the elements whose ids are in describedBy (the
+  // question or the command); all ids come from the prompt id, so they hold
+  // across renders.
+  function promptCard(kind, kicker, st, id, content, describedBy, s) {
+    const card = el('div', `prompt ${kind}`);
+    const kick = el('p', 'prompt-kicker', kicker);
+    kick.id = window.HuddlePrompt.promptDomIds(id).kicker;
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-labelledby', kick.id);
+    card.setAttribute('aria-describedby', describedBy.join(' '));
+    card.append(kick, ...content, ...promptFoot(st, id, s));
+    return card;
+  }
+
+  function sendAnswers(id, result) {
+    if (result.done) window.huddle.answer({ id, kind: 'ask', answers: result.answers });
+    render();
+  }
+
+  // One question at a time; the answers go to main together after the last.
+  // Each option is a full-width button with its label and, below it, its
+  // description. Multi-select options carry a check box and end with Done.
+  function renderAsk(st, pv, s) {
+    const q = pv.question;
+    const multi = q.multiSelect === true;
+    const options = el('div', 'prompt-options');
+    q.options.forEach((o, j) => {
+      const label = str(o.label);
+      const description = str(o.description);
+      const b = promptButton(undefined, `opt-${j}`, 'option');
+      const text = el('span', 'opt-text');
+      text.append(el('span', 'opt-label', label));
+      if (description) text.append(el('span', 'opt-desc', description));
+      if (multi) {
+        const on = pv.chosen.includes(label);
+        b.classList.toggle('chosen', on);
+        b.setAttribute('aria-pressed', String(on));
+        b.append(on ? checkedBox('opt-mark') : emptyBox('opt-mark'));
+        b.addEventListener('click', () => {
+          st.toggleOption(label);
+          render();
+        });
+      } else {
+        b.addEventListener('click', () => sendAnswers(pv.id, st.answerQuestion(label)));
+      }
+      b.append(text);
+      options.append(b);
+    });
+    if (multi) {
+      const done = promptButton('Done', 'done', 'done');
+      done.disabled = pv.chosen.length === 0;
+      done.addEventListener('click', () => sendAnswers(pv.id, st.finishMulti()));
+      options.append(done);
+    }
+    const ids = window.HuddlePrompt.promptDomIds(pv.id);
+    const text = el('p', 'prompt-text', str(q.question));
+    text.id = ids.text;
+    return promptCard('ask', 'Question', st, pv.id, [text, options], [ids.text], s);
+  }
+
+  // Renders now, or once no pointer is down, so a press keeps its button.
+  function renderWhenFree() {
+    if (hold.isHeld()) setTimeout(renderWhenFree, 100);
+    else render();
+  }
+
+  // Re-render when a confirm click runs out, so "Confirm allow" turns back
+  // into "Allow".
+  function scheduleArmExpiry() {
+    clearTimeout(armTimer);
+    armTimer = setTimeout(renderWhenFree, window.HuddlePrompt.ARM_MS + 50);
+  }
+
+  // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
+  // Deny is one click. The whole command is shown, wrapped, with no scroll
+  // box of its own.
+  function renderPermission(st, pv, s) {
+    const command = el('pre', 'prompt-command', str(pv.command));
+    command.title = `${str(pv.toolName) || 'Shell'} command`;
+    const allow = promptButton(
+      pv.armed ? 'Confirm allow' : 'Allow',
+      'allow',
+      pv.armed ? 'allow primary armed' : 'allow primary',
+    );
+    allow.addEventListener('click', () => {
+      const wasArmed = st.confirmPending();
+      if (st.armAllow() === 'send') {
+        window.huddle.answer({ id: pv.id, kind: 'permission', allow: true });
+      } else if (!wasArmed && st.confirmPending()) {
+        // A fresh arm: main records it too and takes the allow only after it.
+        window.huddle.arm(pv.id);
+        scheduleArmExpiry();
+      }
+      render();
+    });
+    const deny = promptButton('Deny', 'deny', 'deny');
+    deny.addEventListener('click', () => {
+      if (st.deny()) window.huddle.answer({ id: pv.id, kind: 'permission', allow: false });
+      render();
+    });
+    const actions = el('div', 'prompt-actions');
+    actions.append(deny, allow);
+    const ids = window.HuddlePrompt.promptDomIds(pv.id);
+    command.id = ids.command;
+    return promptCard('permission', 'Run this command?', st, pv.id, [command, actions], [ids.command], s);
+  }
+
+  // The card for a held prompt, or null (none, malformed, or answered).
+  function renderPrompt(s) {
+    const st = promptStateFor(s.prompt);
+    const pv = st && st.current();
+    // An answered card is hidden at once. If main refuses the answer (it
+    // does not fit, or its timing is off), it says so and the card comes
+    // back (onAnswerRefused below).
+    if (!pv || pv.answered) return null;
+    return pv.kind === 'ask' ? renderAsk(st, pv, s) : renderPermission(st, pv, s);
+  }
+
+  // --- Session view ----------------------------------------------------------
+
+  // The bar with "5/7 Animations" and the chip, as on the list card (or the
+  // chip or "Working" alone), then every plan step (a checked box when
+  // done, a spinner for the active one, an empty box when still to do), or
+  // "No plan yet".
+  function planSection(s, f) {
+    const box = el('div', 'sv-plan');
+    if (window.HuddleProgress.showsBar(s.plan, f.status) && f.bar) {
+      box.append(progressBlock(s.plan, f.bar, f.color, CHIPS[f.kind], f.kind));
+    } else {
+      const tag = tagLine(f.kind);
+      if (tag) box.append(tag);
+    }
+    const rows = window.HuddleProgress.planRows(s.plan);
+    if (rows.length === 0) {
+      box.append(el('p', 'no-plan', 'No plan yet'));
+      return box;
+    }
+    const ol = el('ol', 'plan');
+    ol.setAttribute('aria-label', f.bar ? `Plan, ${f.bar.spoken}` : 'Plan');
+    for (const r of rows) {
+      const item = el('li', r.active ? `plan-item ${r.status} active` : `plan-item ${r.status}`);
+      const mark = r.mark === 'checked' ? checkedBox() : r.mark === 'spinner' ? spinner(f.color) : emptyBox();
+      const text = el('span', 'plan-text');
+      text.append(el('span', 'sr-only', `${r.spoken}: `), document.createTextNode(r.text));
+      item.append(mark, text);
+      ol.append(item);
+    }
+    box.append(ol);
+    return box;
+  }
+
+  // One session: the back arrow ("All sessions"), the host badge and the
+  // open arrow; the avatar and name; the held prompt, if any; the plan.
+  // Returns the prompt id of the card shown, or null.
+  function renderSession(s, needs) {
+    const f = facts(s, needs);
+    sessionView.dataset.sessionId = f.id;
+    sessionView.className = `session-view ${f.status} kind-${f.kind}`;
+    sessionView.setAttribute('aria-label', f.name);
+
+    const back = el('button', 'back-btn');
+    back.type = 'button';
+    back.dataset.role = 'back';
+    back.title = 'Back to all sessions';
+    back.append(icon('arrow-left'), el('span', 'back-text', 'All sessions'));
+    back.addEventListener('click', () => goBack(true));
+    const right = el('div', 'sv-top-right');
+    const badge = hostBadge(f);
+    if (badge) right.append(badge);
+    right.append(openButton(s, f));
+    const top = el('div', 'sv-top');
+    top.append(back, right);
+
+    const head = el('div', 'sv-head');
+    const name = el('h2', 'sv-name');
+    name.title = f.name;
+    name.append(el('span', 'sr-only', `${SPOKEN[f.kind]}: `), document.createTextNode(f.name));
+    head.append(window.HuddleAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id)), name);
+
+    const card = s.prompt ? renderPrompt(s) : null;
+    sessionView.replaceChildren(top, head);
+    if (card) sessionView.append(card);
+    sessionView.append(planSection(s, f));
+    return card ? s.prompt.id : null;
+  }
+
+  // --- Moving between the views ---------------------------------------------
+
+  function cancelReturn() {
+    clearTimeout(returnTimer);
+    returnTimer = null;
+    returnFor = null;
+  }
+
+  // Whether keyboard focus sits in the session view, or nowhere because the
+  // control that had it just went away (an answered card).
+  function focusInSessionView() {
+    const a = document.activeElement;
+    return !a || a === document.body || sessionView.contains(a);
+  }
+
+  function openSession(id) {
+    cancelReturn();
+    view.open(id);
+    if (view.current().kind === 'session') render({ focus: { sessionId: id, role: 'back' } });
+  }
+
+  // Back to the list, with focus on the card of the session just left when
+  // `withFocus` (the back button, or focus that was in the session view).
+  function goBack(withFocus) {
+    const cur = view.current();
+    cancelReturn();
+    view.back();
+    render({ focus: withFocus && cur.kind === 'session' ? { sessionId: cur.sessionId, role: 'body' } : null });
+  }
+
+  function scheduleReturn(id) {
+    clearTimeout(returnTimer);
+    returnFor = id;
+    returnTimer = setTimeout(returnNow, RETURN_MS);
+  }
+
+  // The delayed return: only while that session is still open and still has
+  // no prompt, and never under a pressed pointer.
+  function returnNow() {
+    returnTimer = null;
+    if (hold.isHeld()) {
+      returnTimer = setTimeout(returnNow, 100);
+      return;
+    }
+    const id = returnFor;
+    returnFor = null;
+    const cur = view.current();
+    if (cur.kind !== 'session' || cur.sessionId !== id) return;
+    const s = sessionById(id);
+    if (s && s.prompt) return;
+    goBack(focusInSessionView());
+  }
+
+  // --- Rendering -------------------------------------------------------------
+
+  // The control that has focus, as its session and data-role, so a re-render
+  // can give focus back to the control that stands in for it.
+  function captureFocus() {
+    const a = document.activeElement;
+    if (!a || a === document.body || !a.dataset || !a.dataset.role) return null;
+    const host = a.closest('[data-session-id]');
+    return host ? { sessionId: host.dataset.sessionId, role: a.dataset.role } : null;
+  }
+
+  function restoreFocus(focus) {
+    if (!focus || !focus.sessionId || !focus.role) return;
+    let box = null;
+    if (!sessionView.hidden) {
+      if (sessionView.dataset.sessionId === focus.sessionId) box = sessionView;
+    } else {
+      for (const li of list.children) {
+        if (li.dataset.sessionId === focus.sessionId) {
+          box = li;
+          break;
+        }
       }
     }
-
-    if (isOpen) li.append(renderDetails(s, bar, color));
-    return li;
+    if (!box) return;
+    for (const node of box.querySelectorAll('[data-role]')) {
+      if (node.dataset.role === focus.role) {
+        node.focus();
+        return;
+      }
+    }
   }
 
   // The drain line of each prompt card and the spinners are CSS animations,
   // and a re-render builds new elements. Each new animation is moved to where
-  // it would be: the drain to the time since the prompt was first shown, the
+  // it would be: the drain to the time since the prompt first came, the
   // spinners to one shared clock, so neither jumps back. Under reduced motion
   // there are no animations and nothing to move.
   function syncAnimations() {
     const now = performance.now();
-    for (const drain of list.querySelectorAll('.prompt-drain')) {
+    for (const drain of sessionView.querySelectorAll('.prompt-drain')) {
       const seen = promptSeen.get(drain.dataset.promptId);
       if (seen === undefined) continue;
       for (const a of drain.getAnimations()) a.currentTime = Math.max(0, now - seen);
     }
-    for (const spin of list.querySelectorAll('.mark-spinner')) {
+    for (const spin of panel.querySelectorAll('.mark-spinner')) {
       for (const a of spin.getAnimations()) {
         const d = a.effect ? a.effect.getComputedTiming().duration : 0;
         if (typeof d === 'number' && d > 0) a.currentTime = now % d;
@@ -471,50 +664,73 @@
     }
   }
 
-  function render() {
-    // Remember which control had focus so a re-render does not steal it.
-    const active = document.activeElement;
-    const focusId = active && active.closest('.buddy') ? active.closest('.buddy').dataset.sessionId : null;
-    const focusRole = active && active.dataset ? active.dataset.role : null;
+  // The countdown text changes only when its whole second does, so it
+  // updates at most once a second; the check runs a few times a second to
+  // stay on the second.
+  function updateCountdowns() {
+    for (const node of sessionView.querySelectorAll('.prompt-countdown')) {
+      const text = countdownFor(node.dataset.promptId);
+      if (node.textContent !== text) node.textContent = text;
+    }
+  }
 
-    const ids = new Set(sessions.map((s) => str(s.sessionId)));
-    for (const id of expanded) if (!ids.has(id)) expanded.delete(id);
-    // Avatar colors (task 3): keep, free and hand out palette indexes.
+  function syncCountdownTimer() {
+    const any = !collapsed && !sessionView.hidden && !!sessionView.querySelector('.prompt-countdown');
+    if (any && !countdownTimer) countdownTimer = setInterval(updateCountdowns, 250);
+    else if (!any && countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  // opts.focus: where focus goes after this render ({ sessionId, role }), or
+  // null for nowhere in particular; without it the focused control keeps
+  // focus across the re-render.
+  function render(opts) {
+    const focus = opts && opts.focus !== undefined ? opts.focus : captureFocus();
+
+    const ids = new Set(sessions.map((s) => str(s && s.sessionId)));
     colorOf = window.HuddleColors.assignColors([...ids], colorOf, window.HuddleAvatar.PALETTE.length);
-    // A prompt no longer in the snapshot was answered, timed out or ended.
-    const promptIds = new Set(sessions.map((s) => (s && s.prompt ? s.prompt.id : null)));
-    for (const id of promptStates.keys()) if (!promptIds.has(id)) promptStates.delete(id);
-    for (const id of promptSeen.keys()) if (!promptIds.has(id)) promptSeen.delete(id);
-    for (const id of promptHold.keys()) if (!promptIds.has(id)) promptHold.delete(id);
+    const needs = new Set(view.needsYou());
 
     count.textContent = sessions.length ? String(sessions.length) : '';
     panel.classList.toggle('collapsed', collapsed);
 
     if (collapsed) {
-      // Pill only: the session count and a "!" when any session waits.
-      const waiting = sessions.filter((s) => s.status === 'waiting').length;
+      // Pill only: the session count and a "!" when any session needs you.
       pillCount.textContent = String(sessions.length);
-      pillAlert.hidden = waiting === 0;
+      pillAlert.hidden = needs.size === 0;
       const label = `Expand panel, ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
-      pill.setAttribute('aria-label', waiting ? `${label}, ${waiting} waiting for you` : label);
+      pill.setAttribute('aria-label', needs.size ? `${label}, ${needs.size} waiting for you` : label);
       list.replaceChildren();
+      sessionView.replaceChildren();
+      lastCardId = null;
+      syncCountdownTimer();
       reportHeight();
       return;
     }
 
-    list.replaceChildren(...sessions.map(renderBuddy));
-    if (sessions.length === 0) list.append(el('li', 'empty', 'No sessions'));
-
-    if (focusId !== null && focusRole) {
-      for (const li of list.children) {
-        if (li.dataset.sessionId === focusId) {
-          const target = li.querySelector(`[data-role="${focusRole}"]`);
-          if (target) target.focus();
-          break;
-        }
-      }
+    const cur = view.current();
+    const open = cur.kind === 'session' ? sessionById(cur.sessionId) : null;
+    if (open) {
+      list.hidden = true;
+      list.replaceChildren();
+      sessionView.hidden = false;
+      lastCardId = renderSession(open, needs);
+    } else {
+      sessionView.hidden = true;
+      sessionView.replaceChildren();
+      delete sessionView.dataset.sessionId;
+      sessionView.removeAttribute('aria-label');
+      list.hidden = false;
+      list.replaceChildren(...sessions.map((s) => renderBuddy(s, needs)));
+      if (sessions.length === 0) list.append(el('li', 'empty', 'No sessions'));
+      lastCardId = null;
     }
+
+    restoreFocus(focus);
     syncAnimations();
+    syncCountdownTimer();
     reportHeight();
   }
 
@@ -527,19 +743,49 @@
 
   new ResizeObserver(reportHeight).observe(panel);
 
-  const hold = window.HuddleHold.createSnapshotHold((snapshot) => {
-    sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
-    render();
-  });
+  // A snapshot: the view state follows it (an open session that left goes
+  // back to the list; a prompt on another session changes nothing), and the
+  // open session's prompts are checked for the delayed return.
+  function applySnapshot(snapshot) {
+    sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions.filter((s) => s && typeof s === 'object') : [];
+    const now = performance.now();
+    const promptIds = new Set();
+    for (const s of sessions) {
+      if (!s.prompt || typeof s.prompt.id !== 'string') continue;
+      promptIds.add(s.prompt.id);
+      if (!promptSeen.has(s.prompt.id)) promptSeen.set(s.prompt.id, now);
+      promptHold.set(s.prompt.id, window.HuddlePrompt.holdMsOf(s.prompt));
+    }
+    // A prompt no longer in the snapshot was answered, released, timed out
+    // or ended: its state goes, so nothing of it reaches a later prompt.
+    for (const id of promptStates.keys()) if (!promptIds.has(id)) promptStates.delete(id);
+    for (const id of promptSeen.keys()) if (!promptIds.has(id)) promptSeen.delete(id);
+    for (const id of promptHold.keys()) if (!promptIds.has(id)) promptHold.delete(id);
 
-  // While a pointer is down on the list, snapshots wait so the pressed button
-  // stays the same element until the click lands.
+    view.sync(sessions);
+    const cur = view.current();
+    if (cur.kind === 'session') {
+      const s = sessionById(cur.sessionId);
+      const pending = s && s.prompt ? 1 : 0;
+      if (pending > 0) cancelReturn();
+      if (view.onPromptsSettled(cur.sessionId, pending)) scheduleReturn(cur.sessionId);
+    } else {
+      cancelReturn();
+    }
+    render();
+  }
+
+  const hold = window.HuddleHold.createSnapshotHold(applySnapshot);
+
+  // While a pointer is down on the list or the session view, snapshots wait
+  // so the pressed button stays the same element until the click lands.
   function release() {
     hold.up();
     // Deferred so the click that follows pointerup fires on the old button first.
     setTimeout(hold.flush, 0);
   }
   list.addEventListener('pointerdown', () => hold.down());
+  sessionView.addEventListener('pointerdown', () => hold.down());
   window.addEventListener('pointerup', release);
   window.addEventListener('pointercancel', release);
   window.addEventListener('blur', release);

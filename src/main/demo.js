@@ -69,8 +69,8 @@ function demoSessions() {
     {
       ...terminal,
       // Terminal, busy past its complete plan (a follow-up that made no new
-      // plan): the panel shows Working with no bar; the checklist is all
-      // checked.
+      // plan): no bar in the list, an all-checked checklist in its session
+      // view. The demo-multi prompt makes it need you (Working without it).
       sessionId: 'demo-drafting',
       // `host` is demo only: real terminal sessions get theirs from the
       // host lookup in main.
@@ -92,11 +92,25 @@ function demoSessions() {
   ];
 }
 
-// Fake hook bodies for HUDDLE_DEMO=1: one question prompt (a single-select
-// then a multi-select question) and one permission prompt. Main parses them
-// with the real parseHook, so the demo cards follow the same rules as real
-// ones. Nothing is sent anywhere; an answer is only logged.
-function demoPrompts() {
+// Fake hook bodies for HUDDLE_DEMO=1: a question prompt (a single-select
+// question with three options, then a multi-select one), a permission
+// prompt, and a multi-select question for the terminal session hosted by
+// Zed (its card offers "Answer in Zed"). Main parses them with the real
+// parseHook, so the demo cards follow the same rules as real ones. Nothing
+// is sent anywhere; an answer or a release is only logged.
+// HUDDLE_DEMO_PROMPTS=<id>,<id> keeps only those prompts (for example
+// "demo-ask" for a list with a single session that needs you); empty or
+// unset keeps all of them.
+function demoPrompts(env = process.env) {
+  const only = String(env.HUDDLE_DEMO_PROMPTS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const all = allDemoPrompts();
+  return only.length ? all.filter((p) => only.includes(p.id)) : all;
+}
+
+function allDemoPrompts() {
   return [
     {
       id: 'demo-ask',
@@ -138,6 +152,28 @@ function demoPrompts() {
         hook_event_name: 'PermissionRequest',
         tool_name: 'Bash',
         tool_input: { command: 'npm run dist && echo "<b>built</b>" > dist/notes.txt' },
+      },
+    },
+    {
+      id: 'demo-multi',
+      body: {
+        session_id: 'demo-drafting',
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question: 'Which sections go into the December newsletter?',
+              header: 'Sections',
+              multiSelect: true,
+              options: [
+                { label: 'Product news', description: 'The two releases of this month' },
+                { label: 'Client story', description: 'The case from the November workshop' },
+                { label: 'Three short tips', description: 'How-tos for the new panel' },
+              ],
+            },
+          ],
+        },
       },
     },
   ];

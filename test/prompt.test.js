@@ -6,7 +6,9 @@ const {
   createPromptState,
   refusedId,
   promptDomIds,
-  promptHint,
+  releaseLabel,
+  secondsLeft,
+  countdownText,
   holdMsOf,
   ARM_MS,
   MIN_CONFIRM_MS,
@@ -406,14 +408,106 @@ test('promptDomIds escapes every character outside letters, digits and hyphens',
   assert.notEqual(promptDomIds('a_20_b').text, promptDomIds('a b').text);
 });
 
-test('promptHint names where else the prompt can be answered and the hold from the payload', () => {
-  assert.equal(promptHint('terminal', 60000), 'Or answer in the terminal (closes in 60 s)');
-  assert.equal(promptHint('desktop', 15000), 'Or answer in Claude Desktop (closes in 15 s)');
-  for (const odd of [undefined, null, '', 'Terminal', 42, {}]) {
-    assert.equal(promptHint(odd, 30000), 'Or answer in Claude Desktop (closes in 30 s)', String(odd));
+test('releaseLabel names the app the release opens: the host, the terminal or Claude Desktop', () => {
+  assert.equal(releaseLabel('terminal', 'Zed'), 'Answer in Zed');
+  assert.equal(releaseLabel('terminal', 'VS Code'), 'Answer in VS Code');
+  assert.equal(releaseLabel('terminal', '  Windows Terminal  '), 'Answer in Windows Terminal');
+  // A terminal session whose host is not known yet.
+  for (const none of [null, undefined, '', '   ', 42, {}]) {
+    assert.equal(releaseLabel('terminal', none), 'Answer in the terminal', String(none));
   }
-  // No valid hold in the payload: the default 60 s.
-  assert.equal(promptHint('desktop'), 'Or answer in Claude Desktop (closes in 60 s)');
+  // Desktop sessions (and anything that is not 'terminal') never use a host.
+  assert.equal(releaseLabel('desktop', null), 'Answer in Claude Desktop');
+  assert.equal(releaseLabel('desktop', 'Zed'), 'Answer in Claude Desktop');
+  for (const odd of [undefined, null, '', 'Terminal', 42, {}]) {
+    assert.equal(releaseLabel(odd, 'Zed'), 'Answer in Claude Desktop', String(odd));
+  }
+});
+
+test('releaseLabel keeps HTML in a host name as plain text', () => {
+  assert.equal(releaseLabel('terminal', '<b>x</b>'), 'Answer in <b>x</b>');
+});
+
+test('secondsLeft counts whole seconds down from the hold, rounded up, never below 0', () => {
+  assert.equal(secondsLeft(60000, 0), 60);
+  assert.equal(secondsLeft(60000, 1), 60, 'a part of a second still shows the whole second');
+  assert.equal(secondsLeft(60000, 999), 60);
+  assert.equal(secondsLeft(60000, 1000), 59);
+  assert.equal(secondsLeft(60000, 59001), 1);
+  assert.equal(secondsLeft(60000, 60000), 0);
+  assert.equal(secondsLeft(60000, 90000), 0, 'clamped at 0');
+  assert.equal(secondsLeft(8000, 2500), 6, 'the hold comes from the payload');
+  assert.equal(secondsLeft(300000, 0), 300);
+});
+
+test('secondsLeft: a negative or junk elapsed time counts as none', () => {
+  for (const odd of [-5000, NaN, undefined, null, '10', Infinity]) {
+    assert.equal(secondsLeft(30000, odd), 30, String(odd));
+  }
+});
+
+test('secondsLeft: a hold outside 5 s to 300 s falls back like holdMsOf', () => {
+  assert.equal(secondsLeft(undefined, 0), holdMsOf(null) / 1000);
+  assert.equal(secondsLeft(1000, 0), holdMsOf({ holdMs: 1000 }) / 1000);
+  assert.equal(secondsLeft('8000', 0), holdMsOf(null) / 1000);
+});
+
+test('countdownText reads "Releases in N s"', () => {
+  assert.equal(countdownText(60000, 0), 'Releases in 60 s');
+  assert.equal(countdownText(15000, 14200), 'Releases in 1 s');
+  assert.equal(countdownText(15000, 20000), 'Releases in 0 s');
+  assert.equal(countdownText(8000, 2500), 'Releases in 6 s');
+});
+
+test('release is ignored on a card younger than MIN_AGE_MS, like the option buttons', () => {
+  const { st, tick } = make();
+  st.show(ask('a1', [question('Pick?', ['A', 'B'])]));
+  assert.equal(st.release(), false, 'a stray click right after the card appears');
+  tick(MIN_AGE_MS - 1);
+  assert.equal(st.release(), false);
+  tick(1);
+  assert.equal(st.release(), true);
+});
+
+test('release works once per prompt; a second click does nothing', () => {
+  const { st, settle } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.current().released, false);
+  assert.equal(st.release(), true);
+  assert.equal(st.release(), false);
+  assert.equal(st.current().released, true);
+});
+
+test('release is refused for an answered prompt or no prompt', () => {
+  const { st, settle } = make();
+  assert.equal(st.release(), false, 'no prompt');
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.deny(), true);
+  assert.equal(st.release(), false, 'answered');
+});
+
+test('release follows the minimum age of each new question of an ask', () => {
+  const { st, settle, tick } = make();
+  st.show(ask('a1', [question('One?', ['A', 'B']), question('Two?', ['C', 'D'])]));
+  settle();
+  assert.equal(st.answerQuestion('A').done, false);
+  // The second question appeared where the click landed.
+  assert.equal(st.release(), false);
+  tick(MIN_AGE_MS);
+  assert.equal(st.release(), true);
+});
+
+test('a new prompt id starts with release possible again', () => {
+  const { st, settle } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.release(), true);
+  st.show(permission('p2'));
+  assert.equal(st.current().released, false);
+  settle();
+  assert.equal(st.release(), true);
 });
 
 test('holdMsOf takes holdMs from the prompt payload, within 5 s to 300 s, else 60 s', () => {
@@ -441,4 +535,43 @@ test('the snapshot prompt from main carries holdMs and no heldAt', () => {
   assert.equal(entry.view.holdMs, 30000);
   assert.equal('heldAt' in entry.view, false);
   assert.equal(holdMsOf(entry.view), 30000);
+});
+
+test('shownAgain gives a card that comes back into view a new minimum age and disarms Allow', () => {
+  // The session view was left and opened again (or the pill expanded): the
+  // card appears under the cursor, so the second click of a double-click on
+  // the list must not answer, release or confirm anything.
+  const { st, settle, tick } = make();
+  st.show(permission('p1'));
+  settle();
+  assert.equal(st.armAllow(), 'armed');
+  assert.equal(st.shownAgain(), true);
+  assert.equal(st.current().armed, false, 'disarmed');
+  tick(MIN_AGE_MS - 100); // the second click of a double-click
+  assert.equal(st.armAllow(), 'armed', 'too young to arm');
+  assert.equal(st.confirmPending(), false);
+  assert.equal(st.deny(), false);
+  assert.equal(st.release(), false);
+  settle();
+  assert.equal(st.deny(), true);
+});
+
+test('shownAgain keeps the progress of an ask and its picked options', () => {
+  const { st, settle } = make();
+  st.show(ask('a1', [question('One?', ['A', 'B']), question('Pick?', ['C', 'D'], true)]));
+  settle();
+  st.answerQuestion('A');
+  settle();
+  st.toggleOption('D');
+  st.shownAgain();
+  assert.equal(st.current().index, 1);
+  assert.deepEqual(st.current().chosen, ['D']);
+  assert.deepEqual(st.finishMulti(), { done: false }, 'too young');
+  settle();
+  assert.equal(st.finishMulti().done, true);
+});
+
+test('shownAgain with no prompt does nothing', () => {
+  const st = createPromptState();
+  assert.equal(st.shownAgain(), false);
 });

@@ -87,6 +87,7 @@
     let answers = Object.create(null);
     let armedAt = null;
     let answered = false;
+    let released = false; // "Answer in <app>" was clicked for this prompt
     let shownAt = 0; // when the current card or question appeared
 
     function reset() {
@@ -96,6 +97,7 @@
       answers = Object.create(null);
       armedAt = null;
       answered = false;
+      released = false;
       shownAt = 0;
     }
 
@@ -199,6 +201,29 @@
       return true;
     }
 
+    // "Answer in <app>": true once per prompt, for an unanswered card that is
+    // MIN_AGE_MS old (the same guard as the option buttons, so a stray click
+    // right after the card appears neither frees the prompt nor raises
+    // another app). The caller then asks main to release it; the card stays
+    // until the next snapshot drops it.
+    function release() {
+      if (!prompt || answered || released || !settled()) return false;
+      released = true;
+      armedAt = null;
+      return true;
+    }
+
+    // The card came back into view (its session was opened again, or the
+    // panel expanded from the pill): it may sit under the cursor, so it gets
+    // a new minimum age and a pending Allow confirm ends. The question shown
+    // and the options picked stay. Returns false with no prompt.
+    function shownAgain() {
+      if (!prompt) return false;
+      shownAt = now();
+      armedAt = null;
+      return true;
+    }
+
     // Main refused the answer or the arm sent for this prompt: the card is
     // shown again, unarmed, at the question it was on (earlier answers of an
     // ask are kept). A card that was hidden by the answer gets a new minimum
@@ -223,6 +248,7 @@
           count: prompt.questions.length,
           question: q,
           chosen: chosenInOrder(q),
+          released,
         };
       }
       return {
@@ -232,6 +258,7 @@
         toolName: prompt.toolName,
         command: prompt.command,
         armed: confirmPending(),
+        released,
       };
     }
 
@@ -244,6 +271,8 @@
       confirmPending,
       armAllow,
       deny,
+      release,
+      shownAgain,
       refused,
       reset,
     };
@@ -271,20 +300,36 @@
     return Math.round(ms);
   }
 
-  // The line under a card that says where else the prompt can be answered
-  // and that the card closes after the hold: the terminal for a terminal
-  // session, Claude Desktop for any other. holdMs as from holdMsOf.
-  function promptHint(source, holdMs) {
-    const where = source === 'terminal' ? 'the terminal' : 'Claude Desktop';
-    const seconds = Math.round(holdMsOf({ holdMs }) / 1000);
-    return `Or answer in ${where} (closes in ${seconds} s)`;
+  // The release button's text: the app main opens after the release. A
+  // terminal session names its host (Zed, VS Code), or "the terminal" while
+  // the host is not known; any other session is a Claude Desktop one.
+  function releaseLabel(source, host) {
+    if (source !== 'terminal') return 'Answer in Claude Desktop';
+    const name = typeof host === 'string' ? host.trim() : '';
+    return name ? `Answer in ${name}` : 'Answer in the terminal';
+  }
+
+  // Whole seconds left of a hold of holdMs (checked like holdMsOf) after
+  // elapsedMs, rounded up so the last second reads 1, and never below 0.
+  // A negative or junk elapsed time counts as none.
+  function secondsLeft(holdMs, elapsedMs) {
+    const hold = holdMsOf({ holdMs });
+    const elapsed = typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs : 0;
+    return Math.max(0, Math.ceil((hold - elapsed) / 1000));
+  }
+
+  // The time cue next to the release button.
+  function countdownText(holdMs, elapsedMs) {
+    return `Releases in ${secondsLeft(holdMs, elapsedMs)} s`;
   }
 
   const api = {
     createPromptState,
     refusedId,
     promptDomIds,
-    promptHint,
+    releaseLabel,
+    secondsLeft,
+    countdownText,
     holdMsOf,
     ARM_MS,
     MIN_CONFIRM_MS,

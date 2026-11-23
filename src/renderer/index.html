@@ -9,23 +9,25 @@
 <body>
 <main class="panel" id="panel">
   <header class="handle" title="Drag to move">
-    <button type="button" class="icon-btn quit" id="quit" data-role="quit" aria-label="Quit Huddle" title="Quit Huddle"><svg class="quit-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path d="M8 1.5v6"/><path d="M4.6 3.8a5.5 5.5 0 1 0 6.8 0"/></svg></button>
+    <button type="button" class="icon-btn quit" id="quit" data-role="quit" aria-label="Quit Huddle" title="Quit Huddle"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M7 6a7.75 7.75 0 1 0 10 0"/><path d="M12 4v8"/></svg></button>
     <span class="handle-title">Huddle</span>
     <span class="handle-count" id="count"></span>
-    <button type="button" class="icon-btn collapse" id="collapse" data-role="collapse" aria-label="Collapse panel" title="Collapse to a pill">&minus;</button>
-    <button type="button" class="icon-btn hide" id="hide" data-role="hide" aria-label="Hide panel" title="Hide panel (the hotkey shows it again)">×</button>
+    <button type="button" class="icon-btn collapse" id="collapse" data-role="collapse" aria-label="Collapse panel" title="Collapse to a pill"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg></button>
+    <button type="button" class="icon-btn hide" id="hide" data-role="hide" aria-label="Hide panel" title="Hide panel (the hotkey shows it again)"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
   </header>
   <button type="button" class="pill" id="pill" data-role="pill" aria-label="Expand panel">
     <span class="pill-count" id="pill-count"></span>
     <span class="pill-alert" id="pill-alert" aria-hidden="true" hidden>!</span>
   </button>
   <ul class="buddies" id="buddies" aria-label="Sessions"></ul>
+  <section class="session-view" id="session-view" hidden></section>
 </main>
 <script src="hold.js"></script>
 <script src="colors.js"></script>
 <script src="avatar.js"></script>
 <script src="prompt.js"></script>
 <script src="progress.js"></script>
+<script src="view.js"></script>
 <script src="drag.js"></script>
 <script src="renderer.js"></script>
 </body>
