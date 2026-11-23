@@ -13,13 +13,20 @@
 // A pending agent counts only while it looks alive: its own transcript
 // (<subagentsDir>/agent-<id>.jsonl) was written within aliveMs, or its launch
 // or resume is younger than freshLaunchMs. So an agent that stopped without
-// reporting back ages out.
+// reporting back ages out. The limit of this guard: a live agent whose own
+// transcript stays silent for longer than aliveMs (45 minutes), for example
+// during one long tool call or while it waits on its own background work, is
+// missed and its session may show as finished early. An entry whose record
+// and subagent transcript are both older than twice aliveMs leaves the ledger.
 //
 // The first read of a transcript scans its last windowBytes, from the first
 // complete line; later reads go on from where the last one stopped when the
-// file only grew (the plan-reader rules), else they scan the window again.
-// The ledger is cached per file by size and mtime; the liveness check runs on
-// every read. read never throws. Transcript text is never kept or returned.
+// file only grew (the plan-reader rules). A file that only grew, but by more
+// than windowBytes, gets a window scan on top of the old ledger (agents whose
+// notification fell in the skipped bytes then age out through liveness); any
+// other change scans the window again from scratch. The ledger is cached per
+// file by size and mtime; the liveness check runs on every read. read never
+// throws. Transcript text is never kept or returned.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -123,9 +130,10 @@ function applyLines(ledger, buf, from) {
   return end + 1;
 }
 
-// Scans the last windowBytes of the file, from the first complete line.
-function scanWindow(fd, size, windowBytes) {
-  const ledger = new Map();
+// Scans the last windowBytes of the file, from the first complete line, on
+// top of a copy of `base` (an old ledger of the same file, or none).
+function scanWindow(fd, size, windowBytes, base) {
+  const ledger = new Map(base || []);
   const start = Math.max(0, size - windowBytes);
   if (start === 0) {
     const buf = readRange(fd, 0, size);
@@ -146,14 +154,14 @@ function scanForward(fd, from, size, ledger) {
   return { ledger: next, parsedEnd: from + applyLines(next, buf, 0) };
 }
 
-// The forward path is only safe when the file was appended to: it grew, its
-// mtime did not go back, the growth fits the window, and the byte just before
-// the resume offset is still the newline that ended the last parsed line.
-function canResume(fd, prev, size, mtimeMs, windowBytes) {
+// Whether the file was only appended to since the last read: it grew, its
+// mtime did not go back, and the byte just before the resume offset is still
+// the newline that ended the last parsed line. Only then is the old ledger
+// kept.
+function appendedTo(fd, prev, size, mtimeMs) {
   if (!prev) return false;
   if (size <= prev.size || size < prev.parsedEnd) return false;
   if (mtimeMs < prev.mtimeMs) return false;
-  if (size - prev.parsedEnd > windowBytes) return false;
   if (prev.parsedEnd === 0) return true;
   const b = readRange(fd, prev.parsedEnd - 1, 1);
   return b.length === 1 && b[0] === NL;
@@ -171,7 +179,9 @@ function createAgentReader(opts = {}) {
     return age < limit && age > -limit;
   }
 
-  // Counts the ledger's agents that look alive right now.
+  // Counts the ledger's agents that look alive right now. An entry whose
+  // record and subagent transcript (or its absence) are both older than twice
+  // aliveMs is dropped from the ledger for good.
   function alive(ledger, subagentsDir) {
     if (!ledger || ledger.size === 0) return 0;
     const t = now();
@@ -182,13 +192,19 @@ function createAgentReader(opts = {}) {
         n += 1;
         continue;
       }
-      if (!dirOk) continue;
-      try {
-        const st = fs.statSync(path.join(subagentsDir, `agent-${id}.jsonl`), { throwIfNoEntry: false });
-        if (st && st.isFile() && within(t - st.mtimeMs, aliveMs)) n += 1;
-      } catch {
-        /* unreadable: not alive */
+      let fileAge = Infinity; // no file counts as old
+      if (dirOk) {
+        try {
+          const st = fs.statSync(path.join(subagentsDir, `agent-${id}.jsonl`), { throwIfNoEntry: false });
+          if (st && st.isFile()) fileAge = t - st.mtimeMs;
+        } catch {
+          fileAge = NaN; // unreadable: not alive, and not dropped either
+        }
       }
+      if (within(fileAge, aliveMs)) n += 1;
+      // A record without a valid time is dropped only through an old file,
+      // never for a file that is not there (yet).
+      else if (t - at > 2 * aliveMs && fileAge > 2 * aliveMs && (fileAge !== Infinity || Number.isFinite(at))) ledger.delete(id);
     }
     return n;
   }
@@ -219,9 +235,12 @@ function createAgentReader(opts = {}) {
       const size = st.size;
       const mtimeMs = st.mtimeMs;
       if (prev && prev.size === size && prev.mtimeMs === mtimeMs) return result(prev.ledger, subagentsDir);
-      const state = canResume(fd, prev, size, mtimeMs, windowBytes)
+      const appended = appendedTo(fd, prev, size, mtimeMs);
+      // Growth beyond the window: the window lies wholly after the old
+      // resume offset, so it is scanned on top of the old ledger.
+      const state = appended && size - prev.parsedEnd <= windowBytes
         ? scanForward(fd, prev.parsedEnd, size, prev.ledger)
-        : scanWindow(fd, size, windowBytes);
+        : scanWindow(fd, size, windowBytes, appended ? prev.ledger : null);
       cache.set(transcriptFile, { size, mtimeMs, parsedEnd: state.parsedEnd, ledger: state.ledger });
       return result(state.ledger, subagentsDir);
     } catch {
@@ -250,13 +269,35 @@ function effectiveStatus(registryStatus, pendingAgents) {
 // effective status, reading pending agents for registry-idle sessions only
 // (through one shared reader; `filesFor(session)` gives { transcript,
 // subagents } or null). A promoted session is a copy with `status` 'busy' and
-// `pendingAgents`; every other session is returned as it is. When a
-// registry-idle session starts or stops counting as working because of its
-// agents, `log` gets one line with the first 8 characters of its id and the
-// count. prune(keptIds) forgets the files of sessions that left. Never throws.
-function createAgentSource(reader, filesFor, log) {
+// `pendingAgents`; every other session is returned as it is.
+//
+// Settle rule: the last notification is written while the registry still
+// says idle, and the parent wakes up only a moment later. So a session that
+// counted as working because of its agents and now reads idle with none
+// pending stays a busy copy until it has read so for settleMs in a row (by
+// `now`); only then is it released, once. Without this the finished tracker
+// and the toasts would see busy, idle, busy within two polls. A registry
+// status of busy or waiting, and prune, clear the settle state; a session
+// that never had agents gets no delay.
+//
+// `log` gets one line when a registry-idle session starts counting as
+// working because of its agents and one when it is released, with the first
+// 8 characters of its id and the count. prune(keptIds) forgets the files of
+// sessions that left. Never throws.
+const SETTLE_MS = 6000; // three polls
+
+function createAgentSource(reader, filesFor, log, opts = {}) {
+  const settleMs =
+    typeof opts.settleMs === 'number' && Number.isFinite(opts.settleMs) && opts.settleMs >= 0 ? opts.settleMs : SETTLE_MS;
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
   const files = new Map(); // sessionId -> transcript file last read
-  const promoted = new Map(); // sessionId -> counted as working by agents at the last idle read
+  const promoted = new Set(); // sessions counted as working because of their agents
+  const settling = new Map(); // sessionId -> when it first read idle with no agents after that
+
+  function clear(id) {
+    promoted.delete(id);
+    settling.delete(id);
+  }
 
   function say(line) {
     if (typeof log !== 'function') return;
@@ -292,15 +333,37 @@ function createAgentSource(reader, filesFor, log) {
   }
 
   function applyOne(s) {
-    if (!s || s.status !== 'idle' || typeof s.sessionId !== 'string') return s;
-    const n = pendingOf(s);
-    const status = effectiveStatus(s.status, n);
-    const now = status !== s.status;
-    if (now !== (promoted.get(s.sessionId) === true)) {
-      say(`session ${s.sessionId.slice(0, 8)}: ${n} agents pending${now ? ', counts as working' : ''}`);
+    if (!s || typeof s.sessionId !== 'string') return s;
+    const id = s.sessionId;
+    if (s.status !== 'idle') {
+      clear(id);
+      return s;
     }
-    promoted.set(s.sessionId, now);
-    return now ? { ...s, status, pendingAgents: n } : s;
+    const n = pendingOf(s);
+    if (n > 0) {
+      if (!promoted.has(id)) say(`session ${id.slice(0, 8)}: ${n} agents pending, counts as working`);
+      promoted.add(id);
+      settling.delete(id);
+      return { ...s, status: effectiveStatus(s.status, n), pendingAgents: n };
+    }
+    if (!promoted.has(id)) return s;
+    let t;
+    try {
+      t = Number(now());
+    } catch {
+      t = NaN;
+    }
+    if (!Number.isFinite(t)) t = Date.now();
+    let since = settling.get(id);
+    // A clock that went back starts the settle again instead of holding.
+    if (since === undefined || t < since) {
+      since = t;
+      settling.set(id, since);
+    }
+    if (t - since < settleMs) return { ...s, status: 'busy', pendingAgents: 0 };
+    clear(id);
+    say(`session ${id.slice(0, 8)}: 0 agents pending, no longer counts as working`);
+    return s;
   }
 
   function apply(sessions) {
@@ -315,10 +378,11 @@ function createAgentSource(reader, filesFor, log) {
       files.delete(id);
       forgetFile(file);
     }
-    for (const id of [...promoted.keys()]) if (!keep.has(id)) promoted.delete(id);
+    for (const id of [...promoted]) if (!keep.has(id)) clear(id);
+    for (const id of [...settling.keys()]) if (!keep.has(id)) clear(id);
   }
 
   return { apply, prune };
 }
 
-module.exports = { createAgentReader, effectiveStatus, createAgentSource, DEFAULTS };
+module.exports = { createAgentReader, effectiveStatus, createAgentSource, DEFAULTS, SETTLE_MS };

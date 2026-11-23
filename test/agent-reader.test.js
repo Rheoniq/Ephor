@@ -416,17 +416,48 @@ test('a line completed by a later append is read once it is whole', () => {
   assert.equal(pending(r), 0);
 });
 
-test('growth larger than the window is rescanned within the window', () => {
-  write([launch(A)]);
+test('an append larger than the window scans only the window, on top of the old ledger', () => {
+  write([launch(A), launch(C)]);
   const r = reader({ windowBytes: 3000 });
-  assert.equal(pending(r), 1);
+  assert.equal(pending(r), 2);
   const more = [];
   for (let i = 0; i < 100; i++) more.push(filler(i));
-  more.push(launch(B));
+  more.push(launch(B), enqueue(C));
   append(more);
   const spy = spyReads(() => pending(r));
-  assert.equal(spy.value, 1, 'A is outside the new window; B counts');
-  assert.ok(spy.bytes() <= 3001, `read ${spy.bytes()} bytes`);
+  assert.equal(spy.value, 2, 'A is kept from the old ledger, C is cleared in the window, B counts');
+  assert.ok(spy.bytes() <= 3001 + 1, `read ${spy.bytes()} bytes`);
+});
+
+test('a rewrite larger than the window drops the old ledger', () => {
+  const now = Date.now();
+  write([launch(A)]);
+  setMtime(file, now);
+  const r = reader({ windowBytes: 3000 });
+  assert.equal(pending(r), 1);
+  const lines = [filler(0)];
+  for (let i = 1; i < 100; i++) lines.push(filler(i));
+  lines.push(launch(B));
+  write(lines);
+  setMtime(file, now - 60000); // the mtime went back: not an append
+  assert.equal(pending(r), 1, 'only B');
+});
+
+test('an entry whose record and subagent file are both older than twice aliveMs leaves the ledger', () => {
+  const now = Date.now();
+  const clock = now;
+  write([launch(A, now - 100 * MIN), launch(B, now - 100 * MIN), launch(C, now - 100 * MIN)]);
+  const fa = agentFile(A, now - 100 * MIN); // both old: dropped
+  const fb = agentFile(B, now - 60 * MIN); // file within 2x aliveMs: kept, not alive
+  const r = createAgentReader({ now: () => clock });
+  assert.equal(r.read(file, subDir).pending, 0);
+  // Written again: B counts again, A was dropped for good, C (no file) too.
+  setMtime(fa, now);
+  setMtime(fb, now);
+  agentFile(C, now);
+  assert.equal(r.read(file, subDir).pending, 1);
+  // A fresh reader still sees all three through their files.
+  assert.equal(createAgentReader({ now: () => clock }).read(file, subDir).pending, 3);
 });
 
 test('a shrunk file is read again from scratch', () => {
@@ -605,29 +636,141 @@ test('agent source: a throwing reader or path helper counts as no agents and nev
   assert.deepEqual(src4.apply([sess('d', 'idle')]).map((s) => s.status), ['idle']);
 });
 
-test('agent source: logs one line per change with 8 id characters and the count, no names or paths', () => {
-  const counts = { 'T:3a46688f-75ff-495f': 2 };
+// A synthetic session id (UUID-shaped).
+const SID = 'c0ffee12-3456-4789-abcd-ef0123456789';
+
+test('agent source: logs one line when agents start and one when they are released, 8 id characters and the count', () => {
+  const counts = { [`T:${SID}`]: 2 };
   const rd = fakeReader(counts);
   const lines = [];
-  const src = createAgentSource(rd, filesFor, (l) => lines.push(l));
-  const s = sess('3a46688f-75ff-495f', 'idle');
+  let clock = 0;
+  const src = createAgentSource(rd, filesFor, (l) => lines.push(l), { now: () => clock });
+  const s = sess(SID, 'idle');
   src.apply([s]);
   src.apply([s]);
   assert.equal(lines.length, 1);
-  assert.match(lines[0], /3a46688f/);
+  assert.match(lines[0], /c0ffee12/);
   assert.match(lines[0], /\b2\b/);
-  assert.doesNotMatch(lines[0], /75ff|Name|secret|T:|D:/);
-  // The registry turns busy: no line (the change is not from agents).
-  src.apply([sess('3a46688f-75ff-495f', 'busy')]);
+  assert.doesNotMatch(lines[0], /3456|Name|secret|T:|D:/);
+  // The agents end: held busy without a line, then released once with one line.
+  counts[`T:${SID}`] = 0;
+  clock = 2000;
+  src.apply([s]);
+  clock = 4000;
+  src.apply([s]);
   assert.equal(lines.length, 1);
-  // Idle again and the agents are done: one line with 0.
-  counts['T:3a46688f-75ff-495f'] = 0;
-  src.apply([s]);
+  clock = 8000;
+  assert.equal(src.apply([s])[0].status, 'idle');
   assert.equal(lines.length, 2);
-  assert.match(lines[1], /3a46688f/);
+  assert.match(lines[1], /c0ffee12/);
   assert.match(lines[1], /\b0\b/);
+  assert.doesNotMatch(lines[1], /3456|Name|secret|T:|D:/);
   src.apply([s]);
   assert.equal(lines.length, 2);
+  // The registry turns busy and idle again with no agents: no line.
+  src.apply([sess(SID, 'busy')]);
+  src.apply([s]);
+  assert.equal(lines.length, 2);
+});
+
+// The finished tracker and the toast detector over what the source returns.
+function settleHarness(opts = { settleMs: 6000 }) {
+  const counts = {};
+  let clock = 0;
+  const src = createAgentSource(fakeReader(counts), filesFor, () => {}, { ...opts, now: () => clock });
+  const finished = createFinished();
+  const detector = createEventDetector();
+  const all = [];
+  const step = (at, registry, pendingAgents) => {
+    clock = at;
+    counts['T:s'] = pendingAgents;
+    const sessions = src.apply([sess('s', registry)]);
+    finished.update(sessions);
+    const events = detector.detect(sessions).map((e) => e.kind);
+    all.push(...events);
+    return { status: sessions[0].status, events, finished: finished.isFinished('s') };
+  };
+  return { step, src, all };
+}
+
+test('settle: the last agent ending while the registry still says idle gives no finished flash', () => {
+  const { step, all } = settleHarness();
+  step(0, 'busy', 0);
+  assert.deepEqual(step(2000, 'idle', 2), { status: 'busy', events: [], finished: false });
+  // The last notification lands; the parent has not woken up yet.
+  assert.deepEqual(step(4000, 'idle', 0), { status: 'busy', events: [], finished: false });
+  assert.deepEqual(step(6000, 'idle', 0), { status: 'busy', events: [], finished: false });
+  // The parent wakes up to read the result.
+  assert.deepEqual(step(8000, 'busy', 0), { status: 'busy', events: [], finished: false });
+  // Its turn ends: one real finished edge, with no delay.
+  assert.deepEqual(step(10000, 'idle', 0), { status: 'idle', events: ['finished'], finished: true });
+  assert.deepEqual(all, ['finished']);
+});
+
+test('settle: idle with no agents held past settleMs gives exactly one finished event', () => {
+  const { step, all } = settleHarness();
+  step(0, 'busy', 0);
+  step(2000, 'idle', 2);
+  assert.equal(step(4000, 'idle', 0).status, 'busy');
+  assert.equal(step(8000, 'idle', 0).status, 'busy');
+  assert.deepEqual(step(10000, 'idle', 0), { status: 'idle', events: ['finished'], finished: true });
+  step(12000, 'idle', 0);
+  step(14000, 'idle', 0);
+  assert.deepEqual(all, ['finished']);
+});
+
+test('settle: a session that never had agents gets no delay', () => {
+  const { step, all } = settleHarness();
+  step(0, 'busy', 0);
+  assert.deepEqual(step(2000, 'idle', 0), { status: 'idle', events: ['finished'], finished: true });
+  assert.deepEqual(all, ['finished']);
+});
+
+test('settle: agents pending again during the settle restart it', () => {
+  const { step } = settleHarness();
+  step(0, 'idle', 1);
+  step(2000, 'idle', 0);
+  assert.equal(step(4000, 'idle', 1).status, 'busy');
+  assert.equal(step(6000, 'idle', 0).status, 'busy');
+  assert.equal(step(10000, 'idle', 0).status, 'busy', 'the settle started again at 6000');
+  assert.equal(step(12000, 'idle', 0).status, 'idle');
+});
+
+test('settle: waiting, busy and prune clear the settle state', () => {
+  let h = settleHarness();
+  h.step(0, 'idle', 2);
+  h.step(2000, 'idle', 0);
+  assert.equal(h.step(3000, 'waiting', 0).status, 'waiting');
+  assert.equal(h.step(4000, 'idle', 0).status, 'idle');
+  h = settleHarness();
+  h.step(0, 'idle', 2);
+  h.step(2000, 'idle', 0);
+  h.src.prune([]);
+  assert.equal(h.step(4000, 'idle', 0).status, 'idle');
+  // Pruned while still counted as working (not settling yet).
+  h = settleHarness();
+  h.step(0, 'idle', 2);
+  h.src.prune([]);
+  assert.equal(h.step(2000, 'idle', 0).status, 'idle');
+  // Busy clears it too.
+  h = settleHarness();
+  h.step(0, 'idle', 2);
+  h.step(2000, 'busy', 0);
+  assert.equal(h.step(4000, 'idle', 0).status, 'idle');
+});
+
+test('settle: a clock that goes back restarts the settle instead of holding forever', () => {
+  const { step } = settleHarness();
+  step(100000, 'idle', 2);
+  step(100000, 'idle', 0);
+  assert.equal(step(50000, 'idle', 0).status, 'busy');
+  assert.equal(step(56000, 'idle', 0).status, 'idle');
+});
+
+test('settle: settleMs 0 releases at once', () => {
+  const { step } = settleHarness({ settleMs: 0 });
+  step(0, 'idle', 2);
+  assert.equal(step(2000, 'idle', 0).status, 'idle');
 });
 
 test('agent source: prune forgets the files of sessions that left the kept list', () => {
@@ -657,7 +800,7 @@ test('end to end: the real reader through agentFiles under a temp home, as main 
   const { agentFiles } = require('../src/main/paths');
   const home = path.join(dir, 'home');
   const now = Date.now();
-  const s = sess('3a46688f-75ff-495f-b907-ce00e039dbc5', 'idle', { cwd: 'C:\\Code\\Huddle' });
+  const s = sess(SID, 'idle', { cwd: 'C:\\Code\\Huddle' });
   const files = agentFiles(home, s);
   fs.mkdirSync(path.dirname(files.transcript), { recursive: true });
   fs.writeFileSync(files.transcript, [launch(A, now - 10 * MIN), launch(B, now - 10 * MIN), enqueue(B)].join('\n') + '\n');
@@ -666,13 +809,22 @@ test('end to end: the real reader through agentFiles under a temp home, as main 
   fs.writeFileSync(agentTranscript, filler(1) + '\n');
   setMtime(agentTranscript, now - 1 * MIN);
   const lines = [];
-  const src = createAgentSource(createAgentReader({ now: () => now }), (x) => agentFiles(home, x), (l) => lines.push(l));
+  let clock = now;
+  const src = createAgentSource(
+    createAgentReader({ now: () => clock }),
+    (x) => agentFiles(home, x),
+    (l) => lines.push(l),
+    { now: () => clock },
+  );
   let out = src.apply([s, sess('no-cwd', 'idle', { cwd: undefined })]);
   assert.deepEqual(out.map((x) => x.status), ['busy', 'idle']);
   assert.equal(out[0].pendingAgents, 1);
   // The agent stops writing: once its transcript is older than aliveMs the
-  // session is idle again.
+  // session is idle again, after the settle time.
   setMtime(agentTranscript, now - 50 * MIN);
+  out = src.apply([s]);
+  assert.deepEqual(out.map((x) => x.status), ['busy']);
+  clock = now + 6000;
   out = src.apply([s]);
   assert.deepEqual(out.map((x) => x.status), ['idle']);
   assert.equal(lines.length, 2);
