@@ -340,9 +340,12 @@
   }
 
   // The handover notice for a session that waits for an answer while Huddle
-  // holds no card for it (released, timed out, closed by Claude Code, or
-  // terminal answering off). null for any other session. The only text from
-  // outside is the host name; the renderer sets it with textContent.
+  // holds no card for it: the card was released or timed out, Claude Code
+  // closed the connection, or Huddle never held it (terminal answering off,
+  // no hooks, a Write, Edit or MCP approval, a prompt the card cannot show,
+  // a second prompt, a prompt that came while the panel was hidden or quiet).
+  // null for any other session. The only text from outside is the host name;
+  // the renderer sets it with textContent.
   function handoverNotice(s) {
     if (!isObject(s) || s.status !== 'waiting' || s.hasPrompt === true) return null;
     const host = hostName(s.source, s.host);
@@ -350,7 +353,7 @@
       host,
       listLine: `Answer waiting in ${host}`,
       kicker: 'Waiting for your answer',
-      text: `This question is open in ${host}. Huddle is no longer holding it.`,
+      text: `This question is open in ${host}. Huddle is not holding it.`,
       button: `Open ${host}`,
     };
   }
@@ -361,11 +364,24 @@
     return isObject(s) && s.hasHeldPrompt === true ? 'release' : 'open';
   }
 
-  // The arrow's tooltip and spoken label while a prompt is held, else null
-  // (the plain open wording stays).
+  // The arrow's tooltip and spoken label: "Release the question and open
+  // <host>" while a prompt is held, "Open <host> to answer" for a waiting
+  // session without a card (the handover notice's case), else null (the
+  // plain open wording stays). s: { hasHeldPrompt, hasPrompt, status,
+  // source, host }.
   function arrowText(s) {
-    if (arrowAction(s) !== 'release') return null;
-    return `Release the question and open ${hostName(s.source, s.host)}`;
+    if (!isObject(s)) return null;
+    if (arrowAction(s) === 'release') return `Release the question and open ${hostName(s.source, s.host)}`;
+    const notice = handoverNotice({ status: s.status, hasPrompt: s.hasPrompt === true, source: s.source, host: s.host });
+    return notice ? `Open ${notice.host} to answer` : null;
+  }
+
+  // What the arrow does after main answered its release: 'none' for 'ok'
+  // (main opens the app itself), 'open' for anything else (the hold ended
+  // just before the click, so nothing was released or opened): the arrow
+  // then opens the app as a plain open.
+  function arrowAfterRelease(result) {
+    return result === 'ok' ? 'none' : 'open';
   }
 
   // The early-click guard for a control that appears under the pointer: no
@@ -381,6 +397,7 @@
     handoverNotice,
     arrowAction,
     arrowText,
+    arrowAfterRelease,
     clickAllowed,
     createPromptState,
     refusedId,

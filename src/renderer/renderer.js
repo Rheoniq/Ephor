@@ -16,6 +16,8 @@
   const CHIPS = { 'needs-you': 'Needs you', finished: 'Finished' };
   // After the open session's last prompt is answered or released, the view
   // goes back to the list after this long, unless a new prompt comes first.
+  // While the session still waits for an answer without a card (the
+  // handover notice), the delay does not run (HuddleView.createReturnState).
   const RETURN_MS = 700;
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -38,6 +40,7 @@
   const pillCount = document.getElementById('pill-count');
   const pillAlert = document.getElementById('pill-alert');
   const view = window.HuddleView.createViewState();
+  const returns = window.HuddleView.createReturnState();
   const promptStates = new Map(); // prompt id -> HuddlePrompt state
   // Prompt id -> performance.now() when a snapshot first brought it. The
   // countdown and the line that drains over the hold run from there, also
@@ -52,8 +55,7 @@
   let colorOf = new Map();
   let collapsed = false; // set by main through onUiState
   let armTimer = null;
-  let returnTimer = null;
-  let returnFor = null; // the session the pending return is for
+  let returnTimer = null; // the delay before the owed return, while it runs
   let countdownTimer = null;
   // The prompt id whose card the last render showed, or null. A card that
   // was not on screen in the last render comes back with a new minimum age.
@@ -177,7 +179,10 @@
   //
   // While the session has a held prompt the arrow releases it first (the same
   // call as the "Answer in <app>" button, with the same early-click guard);
-  // main then opens the app. Without one it only opens the app.
+  // main then opens the app. A release main refuses (the hold ended just
+  // before the click) falls back to a plain open. Without a held prompt it
+  // only opens the app; on a waiting session without a card its tooltip
+  // says so ("Open <host> to answer").
   function openButton(s, f) {
     const open = el('button', 'icon-btn open');
     open.type = 'button';
@@ -191,29 +196,37 @@
       openTip = 'Open the terminal window';
       openLabel = `Open the terminal window of ${f.name}`;
     }
-    const releaseText = window.HuddlePrompt.arrowText({
+    const arrowText = window.HuddlePrompt.arrowText({
       hasHeldPrompt: heldPromptId(s) !== null,
+      hasPrompt: !!s.prompt,
+      status: f.status,
       source: s.source,
       host: f.host,
     });
-    if (releaseText) {
-      openTip = releaseText;
-      openLabel = releaseText;
+    if (arrowText) {
+      openTip = arrowText;
+      openLabel = arrowText;
     }
     open.setAttribute('aria-label', openLabel);
     open.title = openTip;
     open.append(icon('arrow-right'));
     open.addEventListener('click', () => {
       const held = heldPromptId(s);
+      const target = openTargetOf(s, f);
       if (window.HuddlePrompt.arrowAction({ hasHeldPrompt: held !== null }) === 'release') {
         // Younger than the minimum age: ignored, nothing is released.
         if (promptStates.get(held).release()) {
-          window.huddle.release(held).catch(() => 'failed');
+          window.huddle
+            .release(held)
+            .catch(() => 'failed')
+            .then((result) => {
+              if (window.HuddlePrompt.arrowAfterRelease(result) === 'open') window.huddle.open(target).catch(() => {});
+            });
           render();
         }
         return;
       }
-      window.huddle.open(openTargetOf(s, f)).catch(() => {});
+      window.huddle.open(target).catch(() => {});
     });
     return open;
   }
@@ -340,7 +353,7 @@
       const notice = noticeFor(s, f);
       if (notice) {
         nameBox.append(el('span', 'sr-only', `, ${notice.listLine}`));
-        const line = el('span', 'waiting-line handover-line', notice.listLine);
+        const line = el('span', 'waiting-line', notice.listLine);
         line.setAttribute('aria-hidden', 'true');
         nameBox.append(line);
       }
@@ -665,7 +678,7 @@
     box.setAttribute('role', 'group');
     box.setAttribute('aria-labelledby', kick.id);
     box.setAttribute('aria-describedby', text.id);
-    const btn = el('button', 'release-btn handover-btn');
+    const btn = el('button', 'release-btn');
     btn.type = 'button';
     btn.dataset.role = 'handover-open';
     btn.title = notice.button;
@@ -684,10 +697,15 @@
 
   // --- Moving between the views ---------------------------------------------
 
-  function cancelReturn() {
+  function stopReturnTimer() {
     clearTimeout(returnTimer);
     returnTimer = null;
-    returnFor = null;
+  }
+
+  // No return is owed any more (the view moved by hand, or the list shows).
+  function cancelReturn() {
+    stopReturnTimer();
+    returns.clear();
   }
 
   // Whether keyboard focus sits in the session view, or nowhere because the
@@ -712,27 +730,23 @@
     render({ focus: withFocus && cur.kind === 'session' ? { sessionId: cur.sessionId, role: 'body' } : null });
   }
 
-  function scheduleReturn(id) {
-    clearTimeout(returnTimer);
-    returnFor = id;
-    returnTimer = setTimeout(returnNow, RETURN_MS);
+  // Starts the delay before the owed return, unless it already runs.
+  function startReturnTimer() {
+    if (returnTimer === null) returnTimer = setTimeout(returnNow, RETURN_MS);
   }
 
-  // The delayed return: only while that session is still open and still has
-  // no prompt, and never under a pressed pointer.
+  // The delayed return: only while that session is still open, has no new
+  // prompt and no longer waits (a session that still waits keeps its notice
+  // and the return stays owed), and never under a pressed pointer.
   function returnNow() {
     returnTimer = null;
     if (hold.isHeld()) {
       returnTimer = setTimeout(returnNow, 100);
       return;
     }
-    const id = returnFor;
-    returnFor = null;
     const cur = view.current();
-    if (cur.kind !== 'session' || cur.sessionId !== id) return;
-    const s = sessionById(id);
-    if (s && s.prompt) return;
-    goBack(focusInSessionView());
+    const id = cur.kind === 'session' ? cur.sessionId : null;
+    if (returns.onDue(id, id === null ? null : sessionById(id)) === 'back') goBack(focusInSessionView());
   }
 
   // --- Rendering -------------------------------------------------------------
@@ -882,7 +896,7 @@
 
   // A snapshot: the view state follows it (an open session that left goes
   // back to the list; a prompt on another session changes nothing), and the
-  // open session's prompts are checked for the delayed return.
+  // open session's prompts and wait are checked for the delayed return.
   function applySnapshot(snapshot) {
     sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions.filter((s) => s && typeof s === 'object') : [];
     const now = performance.now();
@@ -909,9 +923,10 @@
     const cur = view.current();
     if (cur.kind === 'session') {
       const s = sessionById(cur.sessionId);
-      const pending = s && s.prompt ? 1 : 0;
-      if (pending > 0) cancelReturn();
-      if (view.onPromptsSettled(cur.sessionId, pending)) scheduleReturn(cur.sessionId);
+      const settled = view.onPromptsSettled(cur.sessionId, s && s.prompt ? 1 : 0);
+      const step = returns.onSnapshot(cur.sessionId, settled, s);
+      if (step === 'start') startReturnTimer();
+      else if (step === 'stop') stopReturnTimer();
     } else {
       cancelReturn();
     }

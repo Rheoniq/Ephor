@@ -2,7 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createViewState, cardKind, escapeGoesBack, backCue } = require('../src/renderer/view');
+const {
+  createViewState,
+  cardKind,
+  escapeGoesBack,
+  backCue,
+  returnStep,
+  createReturnState,
+} = require('../src/renderer/view');
 
 // Snapshot sessions as the view state needs them: an id, an optional prompt
 // and a status.
@@ -297,4 +304,158 @@ test('escapeGoesBack: ignored while a text-like control has focus', () => {
 
 test('escapeGoesBack: junk input is false', () => {
   for (const junk of [undefined, null, 'Escape', 7, [], {}]) assert.equal(escapeGoesBack(junk), false);
+});
+
+// --- The delayed return after the open session's last prompt ---------------
+
+test('returnStep: a prompt cancels, a wait without a card waits, anything else goes', () => {
+  assert.equal(returnStep(s('a', { prompt: PROMPT })), 'cancel');
+  assert.equal(returnStep(s('a', { status: 'waiting', prompt: PROMPT })), 'cancel');
+  assert.equal(returnStep(s('a', { status: 'waiting' })), 'wait', 'the handover notice stays');
+  assert.equal(returnStep(s('a', { status: 'busy' })), 'go');
+  assert.equal(returnStep(s('a', { status: 'idle' })), 'go');
+  assert.equal(returnStep(null), 'go', 'the session left the snapshot');
+  assert.equal(returnStep(undefined), 'go');
+});
+
+// Drives the view state and the return state as the renderer does: one
+// snapshot of session `a` (open), then what the delay timer is told.
+function harness() {
+  const v = createViewState();
+  const r = createReturnState();
+  let timer = false; // the delay runs
+  let last = null; // the session as the last snapshot showed it
+  const log = [];
+  return {
+    v,
+    r,
+    open(session) {
+      last = session;
+      v.sync([session]);
+      v.open('a');
+    },
+    snap(session) {
+      last = session;
+      v.sync([session]);
+      const cur = v.current();
+      if (cur.kind !== 'session') {
+        r.clear();
+        timer = false;
+        return;
+      }
+      const settled = v.onPromptsSettled('a', session.prompt ? 1 : 0);
+      const step = r.onSnapshot('a', settled, session);
+      if (step === 'start') timer = true;
+      if (step === 'stop') timer = false;
+    },
+    // The delay runs out (only while it runs).
+    fire() {
+      if (!timer) return;
+      timer = false;
+      const cur = v.current();
+      if (r.onDue(cur.kind === 'session' ? cur.sessionId : null, last) === 'back') {
+        v.back();
+        log.push('back');
+      }
+    },
+    running: () => timer,
+    log,
+  };
+}
+
+test('return: a card, then waiting without a card keeps the session view', () => {
+  const h = harness();
+  h.open(s('a', { status: 'waiting', prompt: PROMPT }));
+  h.snap(s('a', { status: 'waiting', prompt: PROMPT }));
+  h.snap(s('a', { status: 'waiting' })); // the hold ended, the question is open in the app
+  assert.equal(h.running(), false, 'no delay while it waits');
+  assert.equal(h.r.owedFor(), 'a', 'the return is still owed');
+  h.fire();
+  assert.deepEqual(h.v.current(), { kind: 'session', sessionId: 'a' });
+  // Answered in the app: the session moves on, and the view returns once.
+  h.snap(s('a', { status: 'busy' }));
+  assert.equal(h.running(), true);
+  h.fire();
+  assert.deepEqual(h.log, ['back']);
+  assert.deepEqual(h.v.current(), { kind: 'list' });
+  assert.equal(h.r.owedFor(), null);
+});
+
+test('return: a card, then busy, then waiting inside the delay stays and is still owed', () => {
+  const h = harness();
+  h.open(s('a', { prompt: PROMPT }));
+  h.snap(s('a', { status: 'busy' })); // answered in the panel
+  assert.equal(h.running(), true);
+  h.snap(s('a', { status: 'waiting' })); // a question open in the app before the delay ran out
+  assert.equal(h.running(), false);
+  assert.equal(h.r.owedFor(), 'a');
+  h.fire();
+  assert.deepEqual(h.log, []);
+  h.snap(s('a', { status: 'busy' }));
+  h.fire();
+  assert.deepEqual(h.log, ['back']);
+});
+
+test('return: answered from the panel, busy at once, returns after the delay', () => {
+  const h = harness();
+  h.open(s('a', { prompt: PROMPT }));
+  h.snap(s('a', { status: 'busy' }));
+  h.snap(s('a', { status: 'busy' })); // a second snapshot changes nothing
+  assert.equal(h.running(), true);
+  h.fire();
+  assert.deepEqual(h.log, ['back']);
+});
+
+test('return: the delay running out while the session waits keeps the view and the debt', () => {
+  // The timer fires before any snapshot told it to stop (the session as
+  // last seen waits): no return, still owed.
+  const h = harness();
+  h.open(s('a', { prompt: PROMPT }));
+  h.snap(s('a', { status: 'busy' }));
+  const r = h.r;
+  assert.equal(r.onDue('a', s('a', { status: 'waiting' })), 'none');
+  assert.equal(r.owedFor(), 'a');
+  assert.equal(r.onDue('a', s('a', { status: 'busy' })), 'back');
+  assert.equal(r.owedFor(), null);
+});
+
+test('return: a waiting session that never had a card never returns by itself', () => {
+  const h = harness();
+  h.open(s('a', { status: 'waiting' }));
+  h.snap(s('a', { status: 'waiting' }));
+  h.snap(s('a', { status: 'busy' }));
+  h.snap(s('a', { status: 'idle' }));
+  assert.equal(h.running(), false);
+  h.fire();
+  assert.deepEqual(h.log, []);
+  assert.deepEqual(h.v.current(), { kind: 'session', sessionId: 'a' });
+});
+
+test('return: a new prompt during the delay cancels it; its own answer arms it again', () => {
+  const h = harness();
+  h.open(s('a', { prompt: PROMPT }));
+  h.snap(s('a', { status: 'busy' }));
+  assert.equal(h.running(), true);
+  h.snap(s('a', { prompt: { id: 'p2', kind: 'ask' } }));
+  assert.equal(h.running(), false);
+  assert.equal(h.r.owedFor(), null);
+  h.snap(s('a', { status: 'busy' }));
+  assert.equal(h.running(), true);
+  h.fire();
+  assert.deepEqual(h.log, ['back']);
+});
+
+test('return: due for another session or with nothing owed does nothing', () => {
+  const r = createReturnState();
+  assert.equal(r.onDue('a', s('a')), 'none');
+  assert.equal(r.onSnapshot('a', true, s('a', { status: 'busy' })), 'start');
+  assert.equal(r.onDue('b', s('b')), 'none', 'another session is open now');
+  assert.equal(r.owedFor(), null);
+  assert.equal(r.onSnapshot('a', true, s('a', { status: 'busy' })), 'start');
+  assert.equal(r.onSnapshot('b', false, s('b')), 'stop', 'a debt for a session no longer open goes');
+  assert.equal(r.owedFor(), null);
+  assert.equal(r.onSnapshot(null, false, null), 'stop');
+  assert.equal(r.onSnapshot('a', false, s('a')), 'none');
+  r.clear();
+  assert.equal(r.owedFor(), null);
 });

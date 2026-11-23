@@ -3,8 +3,9 @@
 // Which view the panel shows: the list of sessions, or one session with a
 // back arrow. It holds no DOM and no timers: the renderer owns the short
 // delay before an open session whose prompts were all answered or released
-// goes back to the list. Plain script: in the page it sets window.HuddleView,
-// under Node it is a CommonJS module.
+// goes back to the list, and createReturnState says when that delay runs.
+// Plain script: in the page it sets window.HuddleView, under Node it is a
+// CommonJS module.
 
 (function (root) {
   const LIST = 'list';
@@ -137,7 +138,71 @@
     return { count, badge: String(count), label: `All sessions (${count} ${count === 1 ? 'needs' : 'need'} you)` };
   }
 
-  const api = { createViewState, cardKind, escapeGoesBack, backCue };
+  // What the delayed return does with the open session as the snapshot shows
+  // it (null or undefined when it left): 'cancel' when it has a prompt again,
+  // 'wait' while it still waits for an answer without a card (the handover
+  // notice stays, with its Open button), else 'go'.
+  function returnStep(session) {
+    if (session === null || typeof session !== 'object') return 'go';
+    if (hasPrompt(session)) return 'cancel';
+    return session.status === 'waiting' ? 'wait' : 'go';
+  }
+
+  // The return owed after the open session's last prompt went (answered,
+  // released, timed out or closed). It is owed from the snapshot where
+  // onPromptsSettled said so until the view goes back, a new prompt comes,
+  // or another session is open. The delay runs only while the session does
+  // not wait: a wait stops it and keeps the return owed, so the view goes
+  // back only once the session moved on (or left).
+  function createReturnState() {
+    let owed = null; // the session id the return is owed for
+
+    // A snapshot while session `openId` is open (null: the list is shown).
+    // `settled` is what onPromptsSettled said for it; `session` its snapshot
+    // entry, or null. Returns 'start' (start the delay unless it runs),
+    // 'stop' (stop a running delay) or 'none'.
+    function onSnapshot(openId, settled, session) {
+      if (typeof openId !== 'string' || openId === '') {
+        owed = null;
+        return 'stop';
+      }
+      let dropped = false;
+      if (owed !== null && owed !== openId) {
+        owed = null;
+        dropped = true;
+      }
+      if (settled === true) owed = openId;
+      if (owed === null) return dropped ? 'stop' : 'none';
+      const step = returnStep(session);
+      if (step === 'cancel') {
+        owed = null;
+        return 'stop';
+      }
+      return step === 'wait' ? 'stop' : 'start';
+    }
+
+    // The delay ran out while `openId` is open, with `session` as the last
+    // snapshot shows it. 'back' when the view should go back to the list,
+    // else 'none'; a session that still waits keeps the return owed.
+    function onDue(openId, session) {
+      if (owed === null || owed !== openId) {
+        owed = null;
+        return 'none';
+      }
+      const step = returnStep(session);
+      if (step === 'wait') return 'none';
+      owed = null;
+      return step === 'go' ? 'back' : 'none';
+    }
+
+    function clear() {
+      owed = null;
+    }
+
+    return { onSnapshot, onDue, clear, owedFor: () => owed };
+  }
+
+  const api = { createViewState, cardKind, escapeGoesBack, backCue, returnStep, createReturnState };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddleView = api;
 })(typeof window !== 'undefined' ? window : globalThis);
