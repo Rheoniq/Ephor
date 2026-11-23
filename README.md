@@ -2,7 +2,7 @@
 
 Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Code sessions that need attention, in Claude Desktop and in terminals (Zed, VS Code, Cursor, JetBrains or any terminal), their status and how far each one is through its plan. The arrow on a Desktop session takes you to that session in Claude Desktop; on a terminal session it brings the window that hosts the session to the front. The panel hides itself when nothing needs showing.
 
-This branch adds a session view with a back arrow, the release button "Answer in <app>", a 60 second hold set by `holdSeconds`, and drops the last-command line (see [List and session view](#list-and-session-view)).
+Click a session to open its own view, with its prompt card and its whole plan (see [List and session view](#list-and-session-view)). A prompt card holds the prompt for 60 seconds by default (`holdSeconds`), and its button "Answer in <app>" hands it back to the app at once.
 
 Terminal sessions are listed with a small badge naming their host program, and their arrow reads "Open in <host>" (see [Terminal sessions](#terminal-sessions)).
 
@@ -42,7 +42,7 @@ The panel shows one of two views.
 
 **Session view:** click a card to show only that session:
 
-- At the top, the back arrow "All sessions", the host badge and the open arrow.
+- At the top, the back arrow "All sessions", the host badge and the open arrow. When another session needs you (a held prompt or waiting), the back arrow carries a clay badge with a dot and the number of those sessions, for example "All sessions" with a badge "1"; a screen reader hears "All sessions (1 needs you)".
 - The avatar and the full name.
 - The held prompt card, if any (see [Answering from the panel](#answering-from-the-panel)).
 - The plan card: the bar and its label, then the whole plan as a checklist (a checked box for done steps, a spinner for the active step, an empty box for steps still to do; at most 30 steps). Without a plan it reads "No plan yet". The status chip ("Needs you", "Finished") is left out while a prompt card is shown above it.
@@ -52,7 +52,7 @@ Moving between them:
 
 - "All sessions" or Escape goes back to the list. Escape works from the keyboard only: not while a text field has focus, and not during a mouse press.
 - After the last prompt of the open session is answered or released, the view goes back to the list after 0.7 seconds, unless a new prompt for that session comes first.
-- The view never switches by itself. A prompt on a session you are not looking at only marks its card "Needs you" in the list.
+- The view never switches to another session by itself. A prompt on a session you are not looking at marks its card "Needs you" in the list and, while another session is open, shows as the badge on the back arrow.
 - The view goes back to the list when the open session leaves the panel (it ends or is dismissed).
 
 The last-command line ("Last command requested") is gone.
@@ -82,7 +82,8 @@ Claude Code sessions running in Zed, VS Code, Cursor, JetBrains or any terminal 
 
 A small window says "needs you" when a session starts waiting and "finished" when a busy session goes idle (not when a waiting session goes idle).
 
-- It shows only while you cannot see the panel: hidden (hotkey, tray or Hide button) or collapsed to the pill. With the panel open, the card is the notification; opening the panel clears any toast showing or waiting.
+- It shows only while you cannot see the panel: hidden (hotkey, tray or Hide button) or collapsed to the pill. Opening the panel clears any toast showing or waiting.
+- With the panel open, the session's card in the list is the notification. In the session view of another session, the badge on the back arrow is the notification (see [List and session view](#list-and-session-view)); no toast shows then either.
 - It shows for 4 seconds.
 - Its close cross is the only clickable part. The rest lets clicks through and never takes focus.
 - It sits below the panel or pill, or above it when there is no room below. While the panel is hidden, it sits in the top-right corner of the display.
@@ -130,8 +131,8 @@ Terminal sessions:
 Desktop stays the fallback for everything:
 
 - A prompt is held at most `holdSeconds` (60 seconds by default). Then the card goes away and Desktop shows its normal prompt.
-- The hook `timeout` must be longer than the hold: 70 in the hook setup. You edit `~/.claude/settings.json` yourself; Huddle never does. With the old timeout of 20, the card disappears after 20 seconds and the app's own prompt takes over, which is safe, but the countdown on the card can be wrong.
-- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A hung panel page cannot be detected within the hold; it just means the prompt waits the full hold.
+- The hook `timeout` must be longer than the hold. In `~/.claude/settings.json` change `"timeout": 20` to `"timeout": 70` in both Huddle `http` hook entries: the `PermissionRequest` entry and the `PreToolUse` entry with `"matcher": "AskUserQuestion"`. If you raise `holdSeconds`, the timeout must stay larger than it, for example `310` for `300`. You edit the file yourself; Huddle never does. With the old timeout of 20, the card disappears after 20 seconds and the app's own prompt takes over, which is safe, but the countdown on the card can be wrong.
+- Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A crashed or unresponsive panel page ends all holds at once (detection of a hung page is not verified live).
 - Hiding the panel, collapsing it by hand, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
 - A crashed panel page is reloaded after a second. A crash loop (more than 3 crashes in 60 seconds) leaves the panel blank and answering off until Huddle is restarted.
 - If port 47821 is in use, answering is off: a toast says so once per run, the tray shows "Answering off: port 47821 in use" (also in the tray tooltip), and Huddle retries every 30 seconds. Any other start failure shows "Answering off: hook server failed" and retries the same way.
@@ -159,7 +160,7 @@ Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file
 { "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false, "holdSeconds": 60 }
 ```
 
-`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (70 for the default; see the hook setup). Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
+`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see [Answering from the panel](#answering-from-the-panel)). Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
 
 ## Running next to the first version
 
