@@ -611,6 +611,31 @@ button:focus-visible {
   color: var(--muted);
 }
 
+/* --- Handover notice (session view, in the card's place) ------------------ */
+
+/* Shown for a waiting session when Huddle holds no card: the question is
+   open in its app. Same frame and kicker as the prompt card, in the needs-you
+   tint, with one button that opens the app. */
+.handover {
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--wait-line);
+  border-radius: 12px;
+  background: linear-gradient(var(--wait-tint), var(--wait-tint)), var(--card);
+}
+
+.handover-text {
+  margin: 0 0 12px;
+  font: 400 15px/22px var(--serif);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.handover-foot {
+  display: flex;
+  justify-content: flex-start;
+}
+
 /* --- Prompt card (session view only) ------------------------------------ */
 
 /* A question with an option button per choice, or a command with Deny and

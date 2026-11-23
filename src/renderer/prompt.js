@@ -331,7 +331,57 @@
     return `Releases in ${secondsLeft(holdMs, elapsedMs)} s`;
   }
 
+  // The app a session's question is open in: the terminal's host (Zed, VS
+  // Code), "the terminal" while that host is not known, or Claude Desktop.
+  function hostName(source, host) {
+    if (source !== 'terminal') return 'Claude Desktop';
+    const name = typeof host === 'string' ? host.trim() : '';
+    return name || 'the terminal';
+  }
+
+  // The handover notice for a session that waits for an answer while Huddle
+  // holds no card for it (released, timed out, closed by Claude Code, or
+  // terminal answering off). null for any other session. The only text from
+  // outside is the host name; the renderer sets it with textContent.
+  function handoverNotice(s) {
+    if (!isObject(s) || s.status !== 'waiting' || s.hasPrompt === true) return null;
+    const host = hostName(s.source, s.host);
+    return {
+      host,
+      listLine: `Answer waiting in ${host}`,
+      kicker: 'Waiting for your answer',
+      text: `This question is open in ${host}. Huddle is no longer holding it.`,
+      button: `Open ${host}`,
+    };
+  }
+
+  // What the arrow does: with a held prompt it releases it first (the main
+  // process then opens the app); otherwise it only opens the app.
+  function arrowAction(s) {
+    return isObject(s) && s.hasHeldPrompt === true ? 'release' : 'open';
+  }
+
+  // The arrow's tooltip and spoken label while a prompt is held, else null
+  // (the plain open wording stays).
+  function arrowText(s) {
+    if (arrowAction(s) !== 'release') return null;
+    return `Release the question and open ${hostName(s.source, s.host)}`;
+  }
+
+  // The early-click guard for a control that appears under the pointer: no
+  // click counts until MIN_AGE_MS after it appeared.
+  function clickAllowed(shownAt, now) {
+    if (typeof shownAt !== 'number' || !Number.isFinite(shownAt)) return false;
+    if (typeof now !== 'number' || !Number.isFinite(now)) return false;
+    return now - shownAt >= MIN_AGE_MS;
+  }
+
   const api = {
+    hostName,
+    handoverNotice,
+    arrowAction,
+    arrowText,
+    clickAllowed,
     createPromptState,
     refusedId,
     promptDomIds,

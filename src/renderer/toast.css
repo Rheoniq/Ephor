@@ -111,6 +111,16 @@ body {
   text-overflow: ellipsis;
 }
 
+/* A notice (no kind) is a longer line of app status: it wraps to two lines
+   instead of being cut, so its advice stays readable. */
+.toast:not([data-kind]) .toast-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* The kind, led by the same mark as the panel label: a clay pixel for
    waiting, a check for finished. The first letter is raised to match the
    panel's sentence case. */

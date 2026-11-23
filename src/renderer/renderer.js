@@ -58,6 +58,15 @@
   // The prompt id whose card the last render showed, or null. A card that
   // was not on screen in the last render comes back with a new minimum age.
   let lastCardId = null;
+  // The session whose handover notice the last render showed, or null, and
+  // when that notice appeared: its Open button ignores a click younger than
+  // the minimum age, like the release button.
+  let lastNoticeId = null;
+  let noticeShownAt = 0;
+  // What the last render showed ('pill', 'list' or 'session'): a list that
+  // comes back gives the held prompts a new minimum age, as their arrows may
+  // sit under the cursor.
+  let lastViewKind = null;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -165,6 +174,10 @@
   // The arrow that opens the session's app: Claude Desktop, or for a
   // terminal session the window that hosts it. With the host not known yet
   // it stays enabled and main looks it up on click.
+  //
+  // While the session has a held prompt the arrow releases it first (the same
+  // call as the "Answer in <app>" button, with the same early-click guard);
+  // main then opens the app. Without one it only opens the app.
   function openButton(s, f) {
     const open = el('button', 'icon-btn open');
     open.type = 'button';
@@ -178,16 +191,57 @@
       openTip = 'Open the terminal window';
       openLabel = `Open the terminal window of ${f.name}`;
     }
+    const releaseText = window.HuddlePrompt.arrowText({
+      hasHeldPrompt: heldPromptId(s) !== null,
+      source: s.source,
+      host: f.host,
+    });
+    if (releaseText) {
+      openTip = releaseText;
+      openLabel = releaseText;
+    }
     open.setAttribute('aria-label', openLabel);
     open.title = openTip;
     open.append(icon('arrow-right'));
     open.addEventListener('click', () => {
-      const target = f.isTerminal
-        ? { kind: 'terminal', sessionId: f.id }
-        : { kind: 'desktop', hostSessionId: str(s.hostSessionId) };
-      window.huddle.open(target).catch(() => {});
+      const held = heldPromptId(s);
+      if (window.HuddlePrompt.arrowAction({ hasHeldPrompt: held !== null }) === 'release') {
+        // Younger than the minimum age: ignored, nothing is released.
+        if (promptStates.get(held).release()) {
+          window.huddle.release(held).catch(() => 'failed');
+          render();
+        }
+        return;
+      }
+      window.huddle.open(openTargetOf(s, f)).catch(() => {});
     });
     return open;
+  }
+
+  // The target main opens: Claude Desktop, or the terminal's host window.
+  function openTargetOf(s, f) {
+    return f.isTerminal
+      ? { kind: 'terminal', sessionId: f.id }
+      : { kind: 'desktop', hostSessionId: str(s.hostSessionId) };
+  }
+
+  // The id of the session's held prompt while it can still be released (its
+  // card is not answered or released yet), else null.
+  function heldPromptId(s) {
+    if (!s.prompt || typeof s.prompt.id !== 'string') return null;
+    const st = promptStates.get(s.prompt.id);
+    const pv = st ? st.current() : null;
+    return pv && !pv.answered && !pv.released ? s.prompt.id : null;
+  }
+
+  // The handover notice for a session, or null (see HuddlePrompt).
+  function noticeFor(s, f) {
+    return window.HuddlePrompt.handoverNotice({
+      status: f.status,
+      hasPrompt: !!s.prompt,
+      source: s.source,
+      host: f.host,
+    });
   }
 
   // The program that hosts a terminal session (Zed, VS Code), or null.
@@ -281,6 +335,15 @@
       const waiting = el('span', 'waiting-line', 'Question waiting');
       waiting.setAttribute('aria-hidden', 'true');
       nameBox.append(waiting);
+    } else {
+      // Waiting, but Huddle holds no card: the question is open in the app.
+      const notice = noticeFor(s, f);
+      if (notice) {
+        nameBox.append(el('span', 'sr-only', `, ${notice.listLine}`));
+        const line = el('span', 'waiting-line handover-line', notice.listLine);
+        line.setAttribute('aria-hidden', 'true');
+        nameBox.append(line);
+      }
     }
     body.append(avatar, el('span', 'sr-only', `${SPOKEN[f.kind]}: `), nameBox);
     body.addEventListener('click', () => openSession(f.id));
@@ -575,10 +638,48 @@
     head.append(window.HuddleAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id)), name);
 
     const card = s.prompt ? renderPrompt(s) : null;
+    // No card for a waiting session: the notice stands where the card would.
+    const notice = card ? null : noticeFor(s, f);
+    if (notice) {
+      if (lastNoticeId !== f.id) noticeShownAt = performance.now();
+      lastNoticeId = f.id;
+    } else {
+      lastNoticeId = null;
+    }
     sessionView.replaceChildren(top, head);
     if (card) sessionView.append(card);
-    sessionView.append(planSection(s, f, !!card));
+    else if (notice) sessionView.append(handoverBlock(s, f, notice));
+    sessionView.append(planSection(s, f, !!card || !!notice));
     return card ? s.prompt.id : null;
+  }
+
+  // The notice block: what is going on, and a button that opens the app.
+  // The kicker names the group; the text describes it. All text is fixed
+  // wording around the host name, set with textContent.
+  function handoverBlock(s, f, notice) {
+    const box = el('div', 'handover');
+    const kick = el('p', 'prompt-kicker', notice.kicker);
+    kick.id = 'handover-kicker';
+    const text = el('p', 'handover-text', notice.text);
+    text.id = 'handover-text';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-labelledby', kick.id);
+    box.setAttribute('aria-describedby', text.id);
+    const btn = el('button', 'release-btn handover-btn');
+    btn.type = 'button';
+    btn.dataset.role = 'handover-open';
+    btn.title = notice.button;
+    btn.append(icon('external', 14), el('span', 'release-text', notice.button));
+    btn.addEventListener('click', () => {
+      // A notice that has just appeared may sit under the cursor: a click
+      // before the minimum age opens nothing.
+      if (!window.HuddlePrompt.clickAllowed(noticeShownAt, performance.now())) return;
+      window.huddle.open(openTargetOf(s, f)).catch(() => {});
+    });
+    const foot = el('div', 'handover-foot');
+    foot.append(btn);
+    box.append(kick, text, foot);
+    return box;
   }
 
   // --- Moving between the views ---------------------------------------------
@@ -728,6 +829,8 @@
       list.replaceChildren();
       sessionView.replaceChildren();
       lastCardId = null;
+      lastNoticeId = null;
+      lastViewKind = 'pill';
       syncCountdownTimer();
       reportHeight();
       return;
@@ -740,15 +843,26 @@
       list.replaceChildren();
       sessionView.hidden = false;
       lastCardId = renderSession(open, needs);
+      lastViewKind = 'session';
     } else {
       sessionView.hidden = true;
       sessionView.replaceChildren();
       delete sessionView.dataset.sessionId;
       sessionView.removeAttribute('aria-label');
       list.hidden = false;
+      // A list that comes back (from a session or the pill) may put an arrow
+      // that releases a held prompt under the cursor: new minimum age.
+      if (lastViewKind !== 'list') {
+        for (const s of sessions) {
+          const st = s.prompt && typeof s.prompt.id === 'string' ? promptStates.get(s.prompt.id) : null;
+          if (st) st.shownAgain();
+        }
+      }
       list.replaceChildren(...sessions.map((s) => renderBuddy(s, needs)));
       if (sessions.length === 0) list.append(el('li', 'empty', 'No sessions'));
       lastCardId = null;
+      lastNoticeId = null;
+      lastViewKind = 'list';
     }
 
     restoreFocus(focus);
@@ -778,6 +892,12 @@
       promptIds.add(s.prompt.id);
       if (!promptSeen.has(s.prompt.id)) promptSeen.set(s.prompt.id, now);
       promptHold.set(s.prompt.id, window.HuddlePrompt.holdMsOf(s.prompt));
+      // The arrow in the list releases a held prompt too, so its state (and
+      // its minimum age) starts when the snapshot first brings the prompt.
+      if (!promptStates.has(s.prompt.id)) {
+        const st = window.HuddlePrompt.createPromptState();
+        if (st.show(s.prompt)) promptStates.set(s.prompt.id, st);
+      }
     }
     // A prompt no longer in the snapshot was answered, released, timed out
     // or ended: its state goes, so nothing of it reaches a later prompt.

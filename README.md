@@ -38,7 +38,7 @@ What feeds it:
 
 The panel shows one of two views.
 
-**List:** one card per session with its avatar, name, host badge, bar or status tag, and "Question waiting" while a prompt is held. The arrow (open in Claude Desktop, or "Open in <host>") and the x (dismiss) sit stacked on the right edge. Prompt cards never show in the list.
+**List:** one card per session with its avatar, name, host badge, bar or status tag, and "Question waiting" while a prompt is held. A session that waits for an answer while Huddle holds no card for it (released, timed out, closed by Claude Code, or terminal answering off) shows "Answer waiting in <host>" instead (see the handover notice in the session view below). The arrow (open in Claude Desktop, or "Open in <host>") and the x (dismiss) sit stacked on the right edge. While a prompt is held, the arrow releases it first, then opens the app: its tooltip reads "Release the question and open <host>" (see [Answering from the panel](#answering-from-the-panel)). Prompt cards never show in the list.
 
 **Session view:** click a card to show only that session:
 
@@ -54,6 +54,7 @@ Moving between them:
 - After the last prompt of the open session is answered or released, the view goes back to the list after 0.7 seconds, unless a new prompt for that session comes first.
 - The view never switches to another session by itself. A prompt on a session you are not looking at marks its card "Needs you" in the list and, while another session is open, shows as the badge on the back arrow.
 - The view goes back to the list when the open session leaves the panel (it ends or is dismissed).
+- **Handover notice:** a session that waits for an answer while Huddle holds no card for it (the question was released, the hold ran out, Claude Code closed the connection, or terminal answering is off) shows a notice where the card would be: the kicker "Waiting for your answer", "This question is open in <host>. Huddle is no longer holding it.", and a button "Open <host>" ("Claude Desktop", the terminal's host, or "the terminal" while it is not known). The button opens the app like the arrow, and ignores clicks in the first 500 ms after the notice appears. The notice never shows while a card is held, and goes when the session stops waiting. "No plan yet" stays below it.
 
 The last-command line ("Last command requested") is gone.
 
@@ -89,6 +90,7 @@ A small window says "needs you" when a session starts waiting and "finished" whe
 - It sits below the panel or pill, or above it when there is no room below. While the panel is hidden, it sits in the top-right corner of the display.
 - Quiet mode silences toasts. Dismissed sessions get none.
 - The one "port in use" notice is not a card, so it shows with the panel open too.
+- A second notice, once per run: "Claude Code closed a question after N s. Raise the hook timeout above the hold." It shows when Claude Code closed a held question at least 2 seconds before the hold would have ended (see the hook timeout under [Answering from the panel](#answering-from-the-panel)).
 
 ## Look
 
@@ -104,6 +106,7 @@ When a session raises a prompt that Huddle can handle, its list card reads "Need
 
 - **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use "Answer in <app>" or the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
 - **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
+- **The arrow** on a session with a held prompt does the same as this button: it releases the question first, then opens the app, with the same 500 ms guard. Its tooltip and spoken label then read "Release the question and open <host>". With no held prompt it only opens the app.
 - **"Answer in <app>"** ("Answer in Claude Desktop", "Answer in Zed", or "Answer in the terminal" while the host is not known): releases the question at once, so the app's own prompt appears, and brings that app to the front. The release stands even if the app cannot be opened. The card turns inert at once and goes with the next refresh.
 - Clicks in the first 500 ms after a card or a question appears are ignored, the release button included, so a stray double-click cannot answer.
 
@@ -131,7 +134,7 @@ Terminal sessions:
 Desktop stays the fallback for everything:
 
 - A prompt is held at most `holdSeconds` (60 seconds by default). Then the card goes away and Desktop shows its normal prompt.
-- The hook `timeout` must be longer than the hold. In `~/.claude/settings.json` change `"timeout": 20` to `"timeout": 70` in both Huddle `http` hook entries: the `PermissionRequest` entry and the `PreToolUse` entry with `"matcher": "AskUserQuestion"`. If you raise `holdSeconds`, the timeout must stay larger than it, for example `310` for `300`. You edit the file yourself; Huddle never does. With the old timeout of 20, the card disappears after 20 seconds and the app's own prompt takes over, which is safe, but the countdown on the card can be wrong.
+- The hook `timeout` must be longer than the hold, and BOTH Huddle hook entries need it. The recommended pairing is `"timeout": 300` with `holdSeconds` 290. A long hold keeps the app's own prompt hidden for that long, unless you release the question with the arrow or the "Answer in <app>" button. In `~/.claude/settings.json` change `"timeout": 20` to `"timeout": 70` in both Huddle `http` hook entries: the `PermissionRequest` entry and the `PreToolUse` entry with `"matcher": "AskUserQuestion"`. If you raise `holdSeconds`, the timeout must stay larger than it, for example `310` for `300`. You edit the file yourself; Huddle never does. If one entry keeps a shorter timeout than the hold, Claude Code closes that connection early: the card vanishes after the shorter time while the question stays open in the app. Huddle then shows the handover notice, and once per run a notice toast: "Claude Code closed a question after N s. Raise the hook timeout above the hold." The countdown on the card can also be wrong.
 - Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A crashed or unresponsive panel page ends all holds at once (detection of a hung page is not verified live).
 - Hiding the panel, collapsing it by hand, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
 - A crashed panel page is reloaded after a second. A crash loop (more than 3 crashes in 60 seconds) leaves the panel blank and answering off until Huddle is restarted.

@@ -53,6 +53,7 @@ const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
 const { createHookServer } = require('./hooks');
 const { parseHook } = require('./prompts');
+const { earlyAbort, abortNoticeText } = require('./early-abort');
 const {
   promptView,
   buildResponse,
@@ -164,6 +165,7 @@ let answerServer = null; // the hook server, listening or waiting for its port
 let hookServer = null; // set once the server listens
 let answerRetryTimer = null;
 let portNoticeShown = false; // the "port in use" toast shows once per run
+let abortNoticeShown = false; // the "hook timeout is shorter than the hold" toast shows once per run
 let hookToken = null;
 let answeringNote = null; // tray note when answering is off
 let quitting = false;
@@ -394,8 +396,13 @@ function onPrompt({ id, sessionId, parsed }) {
 // throw and must not touch a destroyed window.
 function onCancel(id) {
   try {
+    // Holds that main ended itself (answer, release, cancel) left the table
+    // before this runs, so an entry still here ended by the hold timer or
+    // because Claude Code closed the connection.
+    const entry = prompts.get(id);
     if (!prompts.delete(id)) return;
     if (quitting) return;
+    if (entry) showAbortNotice(entry);
     afterHoldEnded();
     scheduleRefresh();
   } catch (err) {
@@ -474,6 +481,21 @@ function showPortNotice() {
   portNoticeShown = true;
   if (visibility.isQuiet()) return;
   toastQueue.push({ sessionId: null, kind: 'notice', name: `Answering is off: port ${HOOK_PORT} in use` });
+}
+
+// A hold whose connection Claude Code closed at least 2 s before holdMs
+// would have ended: the hook timeout is shorter than the hold. One toast per
+// run (not in quiet mode), and the same line in the log. A hold that ran out
+// at holdMs has no early end and says nothing.
+function showAbortNotice(entry) {
+  const elapsedMs = performance.now() - entry.heldAt;
+  const seconds = earlyAbort({ elapsedMs, holdMs, reason: 'closed' });
+  if (seconds === null || abortNoticeShown) return;
+  abortNoticeShown = true;
+  const text = abortNoticeText(seconds);
+  console.log(`[huddle] ${text}`);
+  if (visibility.isQuiet()) return;
+  toastQueue.push({ sessionId: null, kind: 'notice', name: text });
 }
 
 // Demo only: the fake prompts go into the same table as held ones, so the
