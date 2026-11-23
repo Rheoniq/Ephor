@@ -2,7 +2,9 @@
 
 Huddle is a small always-on-top panel in the top-right corner of the screen. It shows your Claude Code sessions that need attention, in Claude Desktop and in terminals (Zed, VS Code, Cursor, JetBrains or any terminal), their status and how far each one is through its plan. The arrow on a Desktop session takes you to that session in Claude Desktop; on a terminal session it brings the window that hosts the session to the front. The panel hides itself when nothing needs showing.
 
-This branch adds terminal sessions: they are listed with a small badge naming their host program, and their arrow reads "Open in <host>" (see [Terminal sessions](#terminal-sessions)).
+This branch adds a session view with a back arrow, the release button "Answer in <app>", a 60 second hold set by `holdSeconds`, and drops the last-command line (see [List and session view](#list-and-session-view)).
+
+Terminal sessions are listed with a small badge naming their host program, and their arrow reads "Open in <host>" (see [Terminal sessions](#terminal-sessions)).
 
 Version 0.3.0 adds: a progress bar and a plan checklist per session, a distinct color for each visible session, and clearer question and permission cards.
 
@@ -23,7 +25,7 @@ Plain idle sessions are never shown. "Finished" means the session went from busy
 
 Under each session's name is a thin bar with a label `current/total phase`, for example `3/5 Write tests`. `current` is the number of the step being worked on, so a plan with two steps done and the third active reads 3/5. A finished plan reads `7/7 Done`. The bar fills to current/total, so an active last step already shows a full bar; only the label tells `7/7 Review` from `7/7 Done`. A chip next to the label says "Needs you" (waiting) or "Finished".
 
-A busy session whose plan is complete (it works on a follow-up that made no new plan) shows its Working tag instead of the bar; its expanded checklist still shows every step checked. A waiting or finished session with a complete plan keeps the bar, reading `7/7 Done`.
+A busy session whose plan is complete (it works on a follow-up that made no new plan) shows its Working tag instead of the bar; its checklist in the session view still shows every step checked. A waiting or finished session with a complete plan keeps the bar, reading `7/7 Done`.
 
 What feeds it:
 
@@ -32,12 +34,28 @@ What feeds it:
 - A session that never makes a plan shows its status label instead (Working, Needs you or Finished).
 - The plan comes from Desktop's undocumented transcript format. If that format changes, the bar disappears and the status label shows; nothing else breaks.
 
-Click a session to expand it:
+## List and session view
 
-- The whole plan as a checklist: a checked box for done steps, a spinner for the active step, an empty box for steps still to do. At most 30 steps are shown. Without a plan it reads "No plan yet".
+The panel shows one of two views.
+
+**List:** one card per session with its avatar, name, host badge, bar or status tag, and "Question waiting" while a prompt is held. The arrow (open in Claude Desktop, or "Open in <host>") and the x (dismiss) sit stacked on the right edge. Prompt cards never show in the list.
+
+**Session view:** click a card to show only that session:
+
+- At the top, the back arrow "All sessions", the host badge and the open arrow.
+- The avatar and the full name.
+- The held prompt card, if any (see [Answering from the panel](#answering-from-the-panel)).
+- The plan card: the bar and its label, then the whole plan as a checklist (a checked box for done steps, a spinner for the active step, an empty box for steps still to do; at most 30 steps). Without a plan it reads "No plan yet". The status chip ("Needs you", "Finished") is left out while a prompt card is shown above it.
 - Control and invisible characters in plan steps (bidi marks, zero-width characters, escape codes, variation selectors, blank-looking characters) show as `?`, so they cannot change what the line seems to say.
 
-Each row has the arrow (open in Claude Desktop, or "Open in <host>" for a terminal session) and the x (dismiss) stacked on its right edge.
+Moving between them:
+
+- "All sessions" or Escape goes back to the list. Escape works from the keyboard only: not while a text field has focus, and not during a mouse press.
+- After the last prompt of the open session is answered or released, the view goes back to the list after 0.7 seconds, unless a new prompt for that session comes first.
+- The view never switches by itself. A prompt on a session you are not looking at only marks its card "Needs you" in the list.
+- The view goes back to the list when the open session leaves the panel (it ends or is dismissed).
+
+The last-command line ("Last command requested") is gone.
 
 ## Terminal sessions
 
@@ -81,11 +99,12 @@ The panel stays above borderless full-screen windows (such as a browser video in
 
 ## Answering from the panel
 
-When a session raises a prompt that Huddle can handle, a card appears right under the session's name. It has a small line naming the source ("Question from ..." or "Bash command from ..."), the question in large text, the choices, the hint "Or answer in Claude Desktop (closes in 60 s)" ("Or answer in the terminal (closes in 60 s)" for a terminal session; the number is the hold, see `holdSeconds` below), and a line along its bottom edge that drains over the hold (it stands still when the system asks for reduced motion). The redesign changed the look only; the behaviour is as before:
+When a session raises a prompt that Huddle can handle, its list card reads "Needs you" and "Question waiting". Open the session to see the prompt card: a small kicker ("Question" or "Run this command?"), the question in large text, the choices, then the release button "Answer in <app>", the time left ("Releases in 42 s") and a line along the bottom edge that drains over the hold (it stands still when the system asks for reduced motion).
 
-- **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
-- **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel list scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
-- Clicks in the first moment after a card appears are ignored, so a stray double-click cannot answer.
+- **`AskUserQuestion`:** the question and its options as full-width buttons, each with its description, answered at the `PreToolUse` hook. One click answers a single-select question; a multi-select question has a "Done" button. Several questions are shown one after the other and sent together at the end. There is no "Other" answer; use "Answer in <app>" or the arrow for anything else. A prompt with more than 4 questions, a question with more than 4 options, or duplicate questions or option labels falls through to Desktop.
+- **Bash and PowerShell commands:** "Run this command?", then the whole command, wrapped, in monospace, with Deny on the left and Allow on the right. There is no scroll box: what passes the rules below fits on the card, and the panel scrolls if the card is tall. Allow takes two clicks: the first turns it into "Confirm allow", the second must come after a short pause. Deny is one click.
+- **"Answer in <app>"** ("Answer in Claude Desktop", "Answer in Zed", or "Answer in the terminal" while the host is not known): releases the question at once, so the app's own prompt appears, and brings that app to the front. The release stands even if the app cannot be opened. The card turns inert at once and goes with the next refresh.
+- Clicks in the first 500 ms after a card or a question appears are ignored, the release button included, so a stray double-click cannot answer.
 
 A command card appears only when all of this holds:
 
@@ -94,7 +113,7 @@ A command card appears only when all of this holds:
 - `tool_input` has no keys beyond `command`, `description` and `timeout` (so `run_in_background`, `dangerouslyDisableSandbox` and the like are never approved unseen).
 - The command has no control characters (other than tab and CRLF line breaks), no invisible characters (zero-width or bidi marks) and no blank-looking characters (no-break and other wide spaces, Hangul fillers, the blank Braille pattern, variation selectors).
 
-Everything else, including Write, Edit and MCP tools, falls through to Desktop at once. Free typing, "Other" answers and editing a command are not handled; the arrow opens the session in Desktop for those.
+Everything else, including Write, Edit and MCP tools, falls through to Desktop at once. Free typing, "Other" answers and editing a command are not handled; "Answer in <app>" hands the prompt back for those.
 
 How prompts reach the panel:
 
@@ -110,7 +129,8 @@ Terminal sessions:
 
 Desktop stays the fallback for everything:
 
-- A prompt is held at most `holdSeconds` (60 seconds by default; the hook timeout must be longer, 70 seconds in the hook setup). Then the card goes away and Desktop shows its normal prompt. A hook entry that still has the old timeout of 20 seconds ends the hold after 20 seconds, with the same safe fall-through.
+- A prompt is held at most `holdSeconds` (60 seconds by default). Then the card goes away and Desktop shows its normal prompt.
+- The hook `timeout` must be longer than the hold: 70 in the hook setup. You edit `~/.claude/settings.json` yourself; Huddle never does. With the old timeout of 20, the card disappears after 20 seconds and the app's own prompt takes over, which is safe, but the countdown on the card can be wrong.
 - Desktop handles the prompt when the panel is hidden, quiet mode is on, the panel page has crashed or not loaded yet, the session was dismissed, or Huddle is closed. A hung panel page cannot be detected within the hold; it just means the prompt waits the full hold.
 - Hiding the panel, collapsing it by hand, turning quiet on or dismissing the session while a card is open hands the prompt back to Desktop at once.
 - A crashed panel page is reloaded after a second. A crash loop (more than 3 crashes in 60 seconds) leaves the panel blank and answering off until Huddle is restarted.
@@ -139,7 +159,7 @@ Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file
 { "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false, "holdSeconds": 60 }
 ```
 
-`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see the hook setup). Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
+`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (70 for the default; see the hook setup). Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
 
 ## Running next to the first version
 
@@ -160,7 +180,7 @@ npm install
 npm start
 ```
 
-Demo mode shows fixed fake sessions, including fake prompts, and reads nothing from `~/.claude`. It starts no hook server and makes no token:
+Demo mode shows fixed fake sessions, including fake prompts, and reads nothing from `~/.claude`. From the settings file it reads only `holdSeconds`, and it never writes that file. It starts no hook server and makes no token:
 
 ```
 $env:HUDDLE_DEMO = "1"; npm start
@@ -237,6 +257,7 @@ The hook gate ran before the `Origin` and `Host` checks were added: the server n
 - The `Origin`/`Host` rejection against the real Claude Code client. If the client sends an `Origin` header or another `Host`, every hook gets 403 and answering is dead without any sign; Desktop then handles every prompt.
 - The round trip with the 64-character token (the gate used a shorter test token).
 - Fall-through when Huddle is closed, and at the end of the hold.
+- "Answer in <app>" against a live hook: that the app's own prompt appears at once after the release.
 - Whether Desktop shows a hook error on the instant 204 (no decision).
 - The refusal round trip: an answer main refuses brings the card back and the prompt stays held.
 - Crash recovery of the panel page, and the port retry.
