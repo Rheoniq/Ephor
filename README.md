@@ -1,5 +1,7 @@
 # Ephor
 
+[![CI](https://github.com/Rheoniq/Ephor/actions/workflows/ci.yml/badge.svg)](https://github.com/Rheoniq/Ephor/actions/workflows/ci.yml)
+
 ![Ephor](src/assets/icon.png)
 
 Ephor is a small always-on-top panel for Windows that watches your Claude Code sessions, so you do not have to hunt through windows to see which one needs you.
@@ -49,13 +51,19 @@ npm run dist
 
 ## Turn on answering
 
-Answering needs the token in the user environment variable `EPHOR_HOOK_TOKEN` and two hook entries with `"timeout": 70`. The exact steps are in [docs/superpowers/notes/hook-setup.md](docs/superpowers/notes/hook-setup.md). Use the tray item "Copy token setup command", run the line it gives you, then restart Claude Desktop and your terminals.
+Answering needs the token in the user environment variable `EPHOR_HOOK_TOKEN` and two hook entries with `"timeout": 70`. The exact steps are in [docs/hook-setup.md](docs/hook-setup.md). Use the tray item "Copy token setup command", run the line it gives you, then restart Claude Desktop and your terminals.
 
 ## More
 
 - [docs/reference.md](docs/reference.md): every behavior, setting, limit and what is verified or not.
-- `docs/superpowers`: the design specs and implementation plans.
-- Tests: `npm test`.
+- Tests: `npm test`. Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGELOG.md). License: MIT.
+
+## Troubleshooting
+
+- **Cards never appear:** the token is missing or the hooks are not in place. Redo the steps in [docs/hook-setup.md](docs/hook-setup.md) and restart Claude Desktop and your terminals.
+- **Answering is off, port 47821 in use:** another program holds the port. Close it; Ephor retries every 30 seconds.
+- **A terminal session shows no cards:** turn on "Answer terminal prompts" in the tray menu.
+- **Panel is blank:** quit and start Ephor again; a crash loop turns answering off until a restart.
 
 ## Limits
 

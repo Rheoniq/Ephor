@@ -107,7 +107,7 @@ const TOAST_MS = 4000;
 // Answering prompts from the panel: Claude Code http hooks post to this
 // localhost port. A held hook ends after holdMs with no decision, so
 // Desktop's or the terminal's own prompt takes over; the hook entries'
-// timeout must be longer than the hold (see docs/superpowers/notes).
+// timeout must be longer than the hold (see docs/hook-setup.md).
 // holdMs is the setting holdSeconds, read once at startup (a change needs a
 // restart); until then the default applies.
 const HOOK_PORT = 47821;

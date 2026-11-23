@@ -1,3 +1,5 @@
 node_modules/
 dist/
 .superpowers/
+# Internal design specs and plans, kept locally
+docs/superpowers/

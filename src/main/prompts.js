@@ -122,7 +122,7 @@ function parseHook(body) {
   return null;
 }
 
-// Questions are answered at PreToolUse only (docs/superpowers/notes/hook-gate.md).
+// Questions are answered at PreToolUse only (see docs/hook-setup.md).
 function askResponse(rawQuestions, answers) {
   const updatedInput = { questions: rawQuestions, answers: { ...answers } };
   return {
