@@ -709,10 +709,10 @@ test('resolve rejects invalid pids without loading anything', async () => {
 
 test('folderNameOf gives the last path segment', () => {
   const cases = {
-    'C:\\Users\\jenss\\B.R.I.A.N': 'B.R.I.A.N',
-    'C:\\Users\\jenss\\B.R.I.A.N\\': 'B.R.I.A.N',
-    'C:/Users/jenss/Code/Ephor': 'Ephor',
-    'C:/Users/jenss/Code/Ephor//': 'Ephor',
+    'C:\\Users\\someone\\B.R.I.A.N': 'B.R.I.A.N',
+    'C:\\Users\\someone\\B.R.I.A.N\\': 'B.R.I.A.N',
+    'C:/Users/someone/Code/Ephor': 'Ephor',
+    'C:/Users/someone/Code/Ephor//': 'Ephor',
     'C:\\Users/mixed\\sep/last': 'last',
     '/home/user/project': 'project',
     '\\\\server\\share\\dir': 'dir',

@@ -6,7 +6,7 @@ const path = require('node:path');
 const { encodeCwd, transcriptPath, subagentsPath } = require('../src/main/paths');
 
 test('encodeCwd replaces every non-alphanumeric character with a dash', () => {
-  assert.equal(encodeCwd('C:\\Users\\jenss\\B.R.I.A.N'), 'C--Users-jenss-B-R-I-A-N');
+  assert.equal(encodeCwd('C:\\Users\\someone\\B.R.I.A.N'), 'C--Users-someone-B-R-I-A-N');
   assert.equal(encodeCwd('/home/a_b/my repo'), '-home-a-b-my-repo');
 });
 

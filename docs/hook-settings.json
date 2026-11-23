@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "EXISTING_GUARD_MATCHER_UNCHANGED",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "EXISTING_PRETOOL_GUARD_COMMAND_UNCHANGED"
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47821/hook",
+            "timeout": 70,
+            "headers": {
+              "X-Ephor-Token": "$EPHOR_HOOK_TOKEN"
+            },
+            "allowedEnvVars": ["EPHOR_HOOK_TOKEN"]
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47821/hook",
+            "timeout": 70,
+            "headers": {
+              "X-Ephor-Token": "$EPHOR_HOOK_TOKEN"
+            },
+            "allowedEnvVars": ["EPHOR_HOOK_TOKEN"]
+          }
+        ]
+      }
+    ],
+    "Stop": "EXISTING_STOP_ENTRIES_UNCHANGED",
+    "Notification": "EXISTING_NOTIFICATION_ENTRIES_UNCHANGED"
+  }
+}

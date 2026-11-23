@@ -167,7 +167,7 @@ Desktop stays the fallback for everything:
 
 ### Hook setup and token
 
-Answering needs two `http` hooks in `~/.claude/settings.json` and the token in the user environment variable `EPHOR_HOOK_TOKEN`. Ephor never edits that file or sets the variable. The exact entries, the token steps and the verified facts are in [docs/superpowers/notes/hook-setup.md](superpowers/notes/hook-setup.md); the JSON shape is in `docs/superpowers/notes/hook-settings.json`.
+Answering needs two `http` hooks in `~/.claude/settings.json` and the token in the user environment variable `EPHOR_HOOK_TOKEN`. Ephor never edits that file or sets the variable. The exact entries, the token steps and the verified facts are in [docs/hook-setup.md](hook-setup.md); the JSON shape is in `docs/hook-settings.json`.
 
 The token is 64 hex characters. The hook gate test used a shorter test token, so after the first start of 0.2.0 or later run the tray "Copy token setup command" again, paste and run the `setx` line, then restart Claude Desktop fully, and every terminal and editor that runs Claude Code: a program sees `EPHOR_HOOK_TOKEN` only after a restart. The copied token can stay in Windows clipboard history (Win+V) if that is on; clear the entry.
 
