@@ -21,7 +21,7 @@ const {
 
 const { readSessions, pidIsAlive } = require('./sessions');
 const { createDismissals } = require('./dismissals');
-const { transcriptPath, subagentsPath } = require('./paths');
+const { transcriptPath, agentFiles } = require('./paths');
 const { openClaudeDesktop, focusWindowOf } = require('./focus');
 const { createHostResolver, loadProcessTable, windowsOf, folderNameOf } = require('./host');
 const {
@@ -137,10 +137,7 @@ const planSource = createPlanSource(
 // Not used in demo mode (demo sessions carry a fixed pendingAgents).
 const agentSource = createAgentSource(
   createAgentReader(),
-  (s) =>
-    typeof s.cwd === 'string' && s.cwd && typeof s.sessionId === 'string' && s.sessionId
-      ? { transcript: transcriptPath(HOME, s.cwd, s.sessionId), subagents: subagentsPath(HOME, s.cwd, s.sessionId) }
-      : null,
+  (s) => agentFiles(HOME, s),
   (line) => console.log(`[huddle] ${line}`),
 );
 let win = null;

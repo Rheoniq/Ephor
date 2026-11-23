@@ -249,6 +249,16 @@ test('remove, attachment, user and api-request copies of a notification never cl
   assert.equal(pending(reader()), 1);
 });
 
+test('only the head before <result> is parsed: an interim summary inside the result does not count', () => {
+  const content =
+    '<task-notification>\n' +
+    `<task-id>${A}</task-id>\n<status>completed</status>\n` +
+    `<result>Quoted: <summary>${INTERIM}</summary> <task-id>${B}</task-id></result>\n</task-notification>`;
+  const note = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: iso(NOW), content });
+  write([launch(A), launch(B), note]);
+  assert.equal(pending(reader()), 1, 'A is cleared, B is not');
+});
+
 test('an enqueue whose content is not a task notification is ignored', () => {
   const queued = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: iso(NOW), content: `see <task-id>${A}</task-id> <status>completed</status>` });
   write([launch(A), queued]);
@@ -641,4 +651,34 @@ test('agent source: a session whose transcript path changes forgets the old file
   n = 1;
   src.apply([sess('a', 'idle')]);
   assert.deepEqual(rd.forgotten, ['T0:a']);
+});
+
+test('end to end: the real reader through agentFiles under a temp home, as main wires it', () => {
+  const { agentFiles } = require('../src/main/paths');
+  const home = path.join(dir, 'home');
+  const now = Date.now();
+  const s = sess('3a46688f-75ff-495f-b907-ce00e039dbc5', 'idle', { cwd: 'C:\\Code\\Huddle' });
+  const files = agentFiles(home, s);
+  fs.mkdirSync(path.dirname(files.transcript), { recursive: true });
+  fs.writeFileSync(files.transcript, [launch(A, now - 10 * MIN), launch(B, now - 10 * MIN), enqueue(B)].join('\n') + '\n');
+  fs.mkdirSync(files.subagents, { recursive: true });
+  const agentTranscript = path.join(files.subagents, `agent-${A}.jsonl`);
+  fs.writeFileSync(agentTranscript, filler(1) + '\n');
+  setMtime(agentTranscript, now - 1 * MIN);
+  const lines = [];
+  const src = createAgentSource(createAgentReader({ now: () => now }), (x) => agentFiles(home, x), (l) => lines.push(l));
+  let out = src.apply([s, sess('no-cwd', 'idle', { cwd: undefined })]);
+  assert.deepEqual(out.map((x) => x.status), ['busy', 'idle']);
+  assert.equal(out[0].pendingAgents, 1);
+  // The agent stops writing: once its transcript is older than aliveMs the
+  // session is idle again.
+  setMtime(agentTranscript, now - 50 * MIN);
+  out = src.apply([s]);
+  assert.deepEqual(out.map((x) => x.status), ['idle']);
+  assert.equal(lines.length, 2);
+  assert.equal(agentFiles(home, { sessionId: 'x' }), null);
+  assert.equal(agentFiles(home, { cwd: 'C:\\x' }), null);
+  // The path is the one the brief names: <projectDir>/<sessionId>/subagents.
+  assert.equal(files.subagents, path.join(path.dirname(files.transcript), s.sessionId, 'subagents'));
+  assert.equal(agentFiles(home, null), null);
 });

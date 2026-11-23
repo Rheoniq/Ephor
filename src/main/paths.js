@@ -21,4 +21,15 @@ function subagentsPath(homeDir, cwd, sessionId) {
   return path.join(homeDir, '.claude', 'projects', encodeCwd(cwd), String(sessionId), 'subagents');
 }
 
-module.exports = { encodeCwd, transcriptPath, subagentsPath };
+// The files the agent reader needs for a registry session: { transcript,
+// subagents }, or null when the session has no cwd or session id.
+function agentFiles(homeDir, session) {
+  if (!session || typeof session.cwd !== 'string' || !session.cwd) return null;
+  if (typeof session.sessionId !== 'string' || !session.sessionId) return null;
+  return {
+    transcript: transcriptPath(homeDir, session.cwd, session.sessionId),
+    subagents: subagentsPath(homeDir, session.cwd, session.sessionId),
+  };
+}
+
+module.exports = { encodeCwd, transcriptPath, subagentsPath, agentFiles };
