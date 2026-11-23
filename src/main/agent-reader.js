@@ -174,6 +174,7 @@ function createAgentReader(opts = {}) {
   const freshLaunchMs = pick(opts.freshLaunchMs, DEFAULTS.freshLaunchMs);
   const now = typeof opts.now === 'function' ? opts.now : Date.now;
   const cache = new Map(); // file -> { size, mtimeMs, parsedEnd, ledger }
+  const lastStats = new Map(); // file -> counts of the last read, for the diagnostic log
 
   function within(age, limit) {
     return age < limit && age > -limit;
@@ -182,16 +183,16 @@ function createAgentReader(opts = {}) {
   // Counts the ledger's agents that look alive right now. An entry whose
   // record and subagent transcript (or its absence) are both older than twice
   // aliveMs is dropped from the ledger for good.
-  function alive(ledger, subagentsDir) {
+  // Also counts, for the diagnostic log, the entries whose subagent file is
+  // fresh (files) and those whose launch is fresh (fresh).
+  function alive(ledger, subagentsDir, counts) {
     if (!ledger || ledger.size === 0) return 0;
     const t = now();
     const dirOk = typeof subagentsDir === 'string' && subagentsDir !== '';
     let n = 0;
     for (const [id, at] of ledger) {
-      if (within(t - at, freshLaunchMs)) {
-        n += 1;
-        continue;
-      }
+      const launchFresh = within(t - at, freshLaunchMs);
+      if (launchFresh) counts.fresh += 1;
       let fileAge = Infinity; // no file counts as old
       if (dirOk) {
         try {
@@ -201,7 +202,9 @@ function createAgentReader(opts = {}) {
           fileAge = NaN; // unreadable: not alive, and not dropped either
         }
       }
-      if (within(fileAge, aliveMs)) n += 1;
+      const fileFresh = within(fileAge, aliveMs);
+      if (fileFresh) counts.files += 1;
+      if (launchFresh || fileFresh) n += 1;
       // A record without a valid time is dropped only through an old file,
       // never for a file that is not there (yet).
       else if (t - at > 2 * aliveMs && fileAge > 2 * aliveMs && (fileAge !== Infinity || Number.isFinite(at))) ledger.delete(id);
@@ -209,20 +212,22 @@ function createAgentReader(opts = {}) {
     return n;
   }
 
-  function result(ledger, subagentsDir) {
+  function result(ledger, subagentsDir, file) {
     let n = 0;
+    const counts = { files: 0, fresh: 0 };
     try {
-      n = alive(ledger, subagentsDir);
+      n = alive(ledger, subagentsDir, counts);
     } catch {
       n = 0;
     }
+    lastStats.set(file, { alive: counts.files, fresh: counts.fresh, ledger: ledger ? ledger.size : 0 });
     return n === 0 ? NONE : Object.freeze({ pending: n });
   }
 
   function read(transcriptFile, subagentsDir) {
     if (typeof transcriptFile !== 'string' || !transcriptFile) return NONE;
     const prev = cache.get(transcriptFile);
-    const fallback = () => result(prev && prev.ledger, subagentsDir);
+    const fallback = () => result(prev && prev.ledger, subagentsDir, transcriptFile);
     let fd;
     try {
       fd = fs.openSync(transcriptFile, 'r');
@@ -234,7 +239,7 @@ function createAgentReader(opts = {}) {
       if (!st.isFile()) return fallback();
       const size = st.size;
       const mtimeMs = st.mtimeMs;
-      if (prev && prev.size === size && prev.mtimeMs === mtimeMs) return result(prev.ledger, subagentsDir);
+      if (prev && prev.size === size && prev.mtimeMs === mtimeMs) return result(prev.ledger, subagentsDir, transcriptFile);
       const appended = appendedTo(fd, prev, size, mtimeMs);
       // Growth beyond the window: the window lies wholly after the old
       // resume offset, so it is scanned on top of the old ledger.
@@ -242,7 +247,7 @@ function createAgentReader(opts = {}) {
         ? scanForward(fd, prev.parsedEnd, size, prev.ledger)
         : scanWindow(fd, size, windowBytes, appended ? prev.ledger : null);
       cache.set(transcriptFile, { size, mtimeMs, parsedEnd: state.parsedEnd, ledger: state.ledger });
-      return result(state.ledger, subagentsDir);
+      return result(state.ledger, subagentsDir, transcriptFile);
     } catch {
       return fallback();
     } finally {
@@ -253,9 +258,16 @@ function createAgentReader(opts = {}) {
   // Drops the cached ledger for a file (for example a session that left).
   function forget(file) {
     cache.delete(file);
+    lastStats.delete(file);
   }
 
-  return { read, forget };
+  // The counts behind the last read of a file: { alive: agents with a fresh
+  // subagent file, fresh: agents with a fresh launch, ledger: entries }.
+  function stats(file) {
+    return lastStats.get(file) || { alive: 0, fresh: 0, ledger: 0 };
+  }
+
+  return { read, forget, stats };
 }
 
 // The status main uses everywhere downstream: an idle session with pending
@@ -293,8 +305,25 @@ function createAgentSource(reader, filesFor, log, opts = {}) {
   const files = new Map(); // sessionId -> transcript file last read
   const promoted = new Set(); // sessions counted as working because of their agents
   const settling = new Map(); // sessionId -> when it first read idle with no agents after that
+  const lastPending = new Map(); // sessionId -> pending count last logged to diag
 
-  function clear(id) {
+  // `diag` (opts.diag) gets the lines for the diagnostic log: ids cut to 8
+  // characters and counts only.
+  function note(line) {
+    if (typeof opts.diag !== 'function') return;
+    try {
+      opts.diag(line);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function endSettle(id, why) {
+    if (settling.has(id)) note(`agents ${id.slice(0, 8)} settle=end why=${why}`);
+  }
+
+  function clear(id, why) {
+    endSettle(id, why || 'cleared');
     promoted.delete(id);
     settling.delete(id);
   }
@@ -317,6 +346,23 @@ function createAgentSource(reader, filesFor, log, opts = {}) {
     }
   }
 
+  function logPending(id, count, transcript) {
+    if (typeof opts.diag !== 'function') return;
+    const old = lastPending.has(id) ? lastPending.get(id) : 0;
+    if (old === count) return;
+    lastPending.set(id, count);
+    let st = null;
+    try {
+      st = typeof reader.stats === 'function' ? reader.stats(transcript) : null;
+    } catch {
+      st = null;
+    }
+    const num = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    note(
+      `agents ${id.slice(0, 8)} pending=${old}->${count} alive=${num(st && st.alive)} fresh=${num(st && st.fresh)} ledger=${num(st && st.ledger)}`,
+    );
+  }
+
   function pendingOf(s) {
     try {
       const f = filesFor(s);
@@ -326,7 +372,9 @@ function createAgentSource(reader, filesFor, log, opts = {}) {
       files.set(s.sessionId, f.transcript);
       const r = reader.read(f.transcript, f.subagents);
       const n = r && r.pending;
-      return Number.isInteger(n) && n > 0 ? n : 0;
+      const count = Number.isInteger(n) && n > 0 ? n : 0;
+      logPending(s.sessionId, count, f.transcript);
+      return count;
     } catch {
       return 0;
     }
@@ -336,13 +384,14 @@ function createAgentSource(reader, filesFor, log, opts = {}) {
     if (!s || typeof s.sessionId !== 'string') return s;
     const id = s.sessionId;
     if (s.status !== 'idle') {
-      clear(id);
+      clear(id, 'registry');
       return s;
     }
     const n = pendingOf(s);
     if (n > 0) {
       if (!promoted.has(id)) say(`session ${id.slice(0, 8)}: ${n} agents pending, counts as working`);
       promoted.add(id);
+      endSettle(id, 'agents');
       settling.delete(id);
       return { ...s, status: effectiveStatus(s.status, n), pendingAgents: n };
     }
@@ -359,9 +408,10 @@ function createAgentSource(reader, filesFor, log, opts = {}) {
     if (since === undefined || t < since) {
       since = t;
       settling.set(id, since);
+      note(`agents ${id.slice(0, 8)} settle=start`);
     }
     if (t - since < settleMs) return { ...s, status: 'busy', pendingAgents: 0 };
-    clear(id);
+    clear(id, 'elapsed');
     say(`session ${id.slice(0, 8)}: 0 agents pending, no longer counts as working`);
     return s;
   }
@@ -378,11 +428,20 @@ function createAgentSource(reader, filesFor, log, opts = {}) {
       files.delete(id);
       forgetFile(file);
     }
-    for (const id of [...promoted]) if (!keep.has(id)) clear(id);
-    for (const id of [...settling.keys()]) if (!keep.has(id)) clear(id);
+    for (const id of [...promoted]) if (!keep.has(id)) clear(id, 'left');
+    for (const id of [...settling.keys()]) if (!keep.has(id)) clear(id, 'left');
+    for (const id of [...lastPending.keys()]) if (!keep.has(id)) lastPending.delete(id);
   }
 
-  return { apply, prune };
+  // The settle state of a session for the diagnostic log: 'on' while a
+  // settle runs, 'off' while it counts as working because of its agents,
+  // 'none' otherwise.
+  function settleState(id) {
+    if (settling.has(id)) return 'on';
+    return promoted.has(id) ? 'off' : 'none';
+  }
+
+  return { apply, prune, settleState };
 }
 
 module.exports = { createAgentReader, effectiveStatus, createAgentSource, DEFAULTS, SETTLE_MS };

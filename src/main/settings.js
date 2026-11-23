@@ -4,6 +4,8 @@
 // when the file is missing, unreadable, malformed or holds a wrong type.
 // terminalAnswering: prompt cards for terminal sessions (off until the live
 // check of hook answers in a terminal has passed).
+// diagnosticLog: write the diagnostic log (huddle-diag.log, diag-log.js); on
+// by default for now.
 // holdSeconds: how long a prompt card holds a hook before Desktop or the
 // terminal takes over; an integer from 5 to 300, else 60. Read at startup,
 // so a change needs a restart.
@@ -19,6 +21,7 @@ const DEFAULTS = Object.freeze({
   collapsed: false,
   terminalAnswering: false,
   holdSeconds: 60,
+  diagnosticLog: true,
 });
 
 function validHoldSeconds(value) {
@@ -40,6 +43,7 @@ function loadSettings(file) {
     terminalAnswering:
       typeof obj.terminalAnswering === 'boolean' ? obj.terminalAnswering : DEFAULTS.terminalAnswering,
     holdSeconds: validHoldSeconds(obj.holdSeconds) ? obj.holdSeconds : DEFAULTS.holdSeconds,
+    diagnosticLog: typeof obj.diagnosticLog === 'boolean' ? obj.diagnosticLog : DEFAULTS.diagnosticLog,
   };
 }
 
@@ -52,6 +56,7 @@ function saveSettings(file, s) {
       collapsed: s.collapsed,
       terminalAnswering: s.terminalAnswering === true,
       holdSeconds: validHoldSeconds(s.holdSeconds) ? s.holdSeconds : DEFAULTS.holdSeconds,
+      diagnosticLog: s.diagnosticLog !== false,
     };
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
   } catch (err) {

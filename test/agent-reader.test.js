@@ -834,3 +834,73 @@ test('end to end: the real reader through agentFiles under a temp home, as main 
   assert.equal(files.subagents, path.join(path.dirname(files.transcript), s.sessionId, 'subagents'));
   assert.equal(agentFiles(home, null), null);
 });
+
+// --- diagnostic counts and lines ---------------------------------------------
+
+test('reader stats: alive counts fresh subagent files, fresh counts fresh launches, ledger the entries', () => {
+  // A: old launch, fresh subagent file. B: fresh launch, no file. C: old launch, old file.
+  write([launch(A, NOW - 10 * MIN), launch(B, NOW - 1000), launch(C, NOW - 10 * MIN)]);
+  agentFile(A, NOW - MIN);
+  agentFile(C, NOW - 60 * MIN);
+  const r = reader();
+  assert.equal(pending(r), 2);
+  assert.deepEqual(r.stats(file), { alive: 1, fresh: 1, ledger: 3 });
+  assert.deepEqual(r.stats(path.join(dir, 'unknown.jsonl')), { alive: 0, fresh: 0, ledger: 0 });
+  r.forget(file);
+  assert.deepEqual(r.stats(file), { alive: 0, fresh: 0, ledger: 0 });
+});
+
+test('agent source diag: one line per pending change with the counts, settle start and end', () => {
+  const counts = { 'T:c0ffee12-x': 2 };
+  const stats = { alive: 1, fresh: 2, ledger: 3 };
+  const rd = { ...fakeReader(counts), stats: () => stats };
+  const lines = [];
+  let clock = 0;
+  const src = createAgentSource(rd, filesFor, () => {}, { now: () => clock, diag: (l) => lines.push(l) });
+  const s = sess('c0ffee12-x', 'idle');
+  assert.equal(src.settleState('c0ffee12-x'), 'none');
+  src.apply([s]);
+  src.apply([s]);
+  assert.deepEqual(lines, ['agents c0ffee12 pending=0->2 alive=1 fresh=2 ledger=3']);
+  assert.equal(src.settleState('c0ffee12-x'), 'off');
+  // Agents end: pending 2->0 and a settle starts, once.
+  counts['T:c0ffee12-x'] = 0;
+  stats.alive = 0; stats.fresh = 0; stats.ledger = 0;
+  clock = 2000;
+  src.apply([s]);
+  clock = 4000;
+  src.apply([s]);
+  assert.deepEqual(lines.slice(1), ['agents c0ffee12 pending=2->0 alive=0 fresh=0 ledger=0', 'agents c0ffee12 settle=start']);
+  assert.equal(src.settleState('c0ffee12-x'), 'on');
+  clock = 8000;
+  src.apply([s]);
+  assert.equal(lines[3], 'agents c0ffee12 settle=end why=elapsed');
+  assert.equal(lines.length, 4);
+  assert.equal(src.settleState('c0ffee12-x'), 'none');
+  // Everything a line holds is an id prefix, a word or a count.
+  for (const l of lines) assert.doesNotMatch(l, /Name|T:|D:|[\\]/);
+});
+
+test('agent source diag: agents returning end the settle; a busy registry ends it too; a throwing diag is ignored', () => {
+  const counts = { 'T:s1': 1 };
+  const lines = [];
+  let clock = 0;
+  const src = createAgentSource(fakeReader(counts), filesFor, () => {}, { now: () => clock, diag: (l) => lines.push(l) });
+  src.apply([sess('s1', 'idle')]);
+  counts['T:s1'] = 0;
+  clock = 1000;
+  src.apply([sess('s1', 'idle')]);
+  counts['T:s1'] = 1;
+  clock = 2000;
+  src.apply([sess('s1', 'idle')]);
+  assert.ok(lines.includes('agents s1 settle=end why=agents'));
+  counts['T:s1'] = 0;
+  clock = 3000;
+  src.apply([sess('s1', 'idle')]);
+  clock = 4000;
+  src.apply([sess('s1', 'busy')]);
+  assert.equal(lines.filter((l) => l.includes('settle=start')).length, 2);
+  assert.ok(lines.includes('agents s1 settle=end why=registry'));
+  const bad = createAgentSource(fakeReader({ 'T:s2': 1 }), filesFor, () => {}, { diag: () => { throw new Error('diag'); } });
+  assert.equal(bad.apply([sess('s2', 'idle')])[0].status, 'busy');
+});

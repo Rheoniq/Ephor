@@ -184,10 +184,16 @@ Without the hooks or the token, Huddle works as a viewer and Desktop shows every
 Huddle keeps its files in `%APPDATA%\Huddle`: `settings.json` and the token file `hook-token`. Electron names the folder after the product name. A folder first created as `%APPDATA%\huddle` keeps that spelling; Windows ignores case, so both are the same folder.
 
 ```
-{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false, "holdSeconds": 60 }
+{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false, "holdSeconds": 60, "diagnosticLog": true }
 ```
 
-`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see [Answering from the panel](#answering-from-the-panel)). Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
+`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see [Answering from the panel](#answering-from-the-panel)). `diagnosticLog` writes the [diagnostic log](#diagnostic-log) (`true`, the default for now); the tray checkbox "Write diagnostic log" sets it too. Restart Huddle after editing the file by hand. A missing or broken value falls back to its default.
+
+## Diagnostic log
+
+To find out why a session showed "Finished" while its agents or background commands were still running, Huddle writes a small log of its status decisions to `%APPDATA%\Huddle\huddle-diag.log`. A line is written only when something changes: a session appears or leaves, its status tuple changes (registry status, pending agents, settle state, effective status, finished, shown, prompt, terminal or Desktop), the number of pending agents changes (with the counts behind it), or a settle starts or ends. Each line starts with a timestamp, and the first line of a run reads `start v<version> pid=<n>`.
+
+The log holds session ids cut to 8 characters, statuses and counts; no session names, paths, plan text, commands or prompt text. It is on by default for now. To switch it off, untick "Write diagnostic log" in the tray menu, or set `"diagnosticLog": false` in `settings.json`. At 256 KiB the file is renamed to `huddle-diag.log.old` (replacing an older one) and a new file starts, so it never grows past about 512 KiB. Demo mode never writes it.
 
 ## Running next to the first version
 

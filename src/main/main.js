@@ -45,6 +45,8 @@ const {
 const { createPlanReader } = require('./plan-reader');
 const { createAgentReader, createAgentSource, effectiveStatus } = require('./agent-reader');
 const { demoSessions, demoPrompts } = require('./demo');
+const { createDiagLog, createStateLogger } = require('./diag-log');
+const APP_VERSION = require('../../package.json').version;
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
 const { createVisibility, toastAllowed, keepsWhilePanelSeen } = require('./visibility');
@@ -136,10 +138,19 @@ const planSource = createPlanSource(
 // One agent reader for all sessions: a registry-idle session whose transcript
 // shows background agents still running counts as busy (agent-reader.js).
 // Not used in demo mode (demo sessions carry a fixed pendingAgents).
+// The diagnostic log (diag-log.js): ids cut to 8 characters, statuses and
+// counts only. Never written in demo mode or while the setting is off.
+let diagLog = null; // created in app.whenReady
+function diagLine(line) {
+  if (DEMO || !diagLog || settings.diagnosticLog === false) return;
+  diagLog.log(line);
+}
+let stateLogger = createStateLogger(diagLine);
 const agentSource = createAgentSource(
   createAgentReader(),
   (s) => agentFiles(HOME, s),
   (line) => console.log(`[huddle] ${line}`),
+  { diag: diagLine },
 );
 let win = null;
 // The expanded panel's top (see panelTarget).
@@ -279,6 +290,7 @@ function buildSnapshot() {
   // shown rule and the snapshot all agree. 'waiting' never changes. Hidden
   // and dismissed sessions go through it too.
   const kept = agentSource.apply(registryKept);
+  const registryStatus = new Map(registryKept.map((s) => [s.sessionId, s.status]));
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   dismissals.prune(keptIds);
   finished.update(kept);
@@ -300,7 +312,40 @@ function buildSnapshot() {
       hostLookups.hostFor(s),
     );
   });
+  logStates(kept, registryStatus, new Set(sessions.map((s) => s.sessionId)));
   return { kept, snapshot: { sessions } };
+}
+
+// One diagnostic line per change of a kept session's decision tuple (and when
+// it appears or leaves). Reads only; never throws.
+function logStates(kept, registryStatus, shownIds) {
+  if (DEMO || !diagLog || settings.diagnosticLog === false) return;
+  try {
+    stateLogger.observe(
+      kept.map((s) => ({
+        sessionId: s.sessionId,
+        reg: registryStatus.get(s.sessionId),
+        pending: Number.isInteger(s.pendingAgents) ? s.pendingAgents : 0,
+        settle: agentSource.settleState(s.sessionId),
+        eff: s.status,
+        finished: finished.isFinished(s.sessionId),
+        shown: shownIds.has(s.sessionId),
+        prompt: !!promptFor(s.sessionId),
+        src: s.source,
+      })),
+    );
+  } catch {
+    /* the log never disturbs a refresh */
+  }
+}
+
+// The tray checkbox "Write diagnostic log". Turning it on starts a fresh
+// change tracker, so every session is written once again.
+function setDiagnosticLog(on) {
+  settings.diagnosticLog = on === true;
+  persistSettings();
+  if (settings.diagnosticLog) stateLogger = createStateLogger(diagLine);
+  console.log(`[huddle] diagnostic log: ${settings.diagnosticLog ? 'on' : 'off'}`);
 }
 
 // --- Answering prompts -----------------------------------------------------
@@ -1096,6 +1141,12 @@ function trayMenu() {
       checked: settings.terminalAnswering === true,
       click: (item) => setTerminalAnswering(item.checked),
     },
+    {
+      label: 'Write diagnostic log',
+      type: 'checkbox',
+      checked: settings.diagnosticLog !== false,
+      click: (item) => setDiagnosticLog(item.checked),
+    },
     { label: 'Copy token setup command', enabled: !!hookToken, click: () => copySetupCommand() },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
@@ -1338,6 +1389,10 @@ if (!app.requestSingleInstanceLock()) {
       ? { ...SETTINGS_DEFAULTS, holdSeconds: loadSettings(settingsFile).holdSeconds }
       : loadSettings(settingsFile);
     holdMs = settings.holdSeconds * 1000;
+    if (!DEMO) {
+      diagLog = createDiagLog({ file: path.join(app.getPath('userData'), 'huddle-diag.log') });
+      diagLine(`start v${APP_VERSION} pid=${process.pid}`);
+    }
     visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
     registerHotkey();
     if (DEMO) loadDemoPrompts();
@@ -1364,6 +1419,7 @@ app.on('before-quit', () => {
   // Set first: the server's stop() below calls onCancel for each held
   // prompt, and onCancel must not schedule a refresh while quitting.
   quitting = true;
+  if (diagLog) diagLog.close();
   if (pollTimer) clearInterval(pollTimer);
   if (debounceTimer) clearTimeout(debounceTimer);
   if (watcher) watcher.close();

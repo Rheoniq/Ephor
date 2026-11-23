@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { loadSettings, saveSettings } = require('../src/main/settings');
 
-const DEFAULTS = { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: false, holdSeconds: 60 };
+const DEFAULTS = { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: false, holdSeconds: 60, diagnosticLog: true };
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-settings-'));
@@ -20,7 +20,7 @@ test('missing file gives defaults', () => {
 
 test('valid file round-trips', () => {
   const file = path.join(tmpDir(), 'settings.json');
-  const s = { hotkey: 'Ctrl+Shift+K', quiet: true, collapsed: true, terminalAnswering: true, holdSeconds: 30 };
+  const s = { hotkey: 'Ctrl+Shift+K', quiet: true, collapsed: true, terminalAnswering: true, holdSeconds: 30, diagnosticLog: false };
   saveSettings(file, s);
   assert.deepEqual(loadSettings(file), s);
 });
@@ -34,6 +34,7 @@ test('wrong types give defaults for those fields', () => {
     collapsed: true,
     terminalAnswering: false,
     holdSeconds: 60,
+    diagnosticLog: true,
   });
 });
 
@@ -73,7 +74,7 @@ test('saveSettings writes terminalAnswering and only the known fields', () => {
   const file = path.join(tmpDir(), 'settings.json');
   saveSettings(file, { ...DEFAULTS, terminalAnswering: true, extra: 'x' });
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.deepEqual(raw, { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: true, holdSeconds: 60 });
+  assert.deepEqual(raw, { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: true, holdSeconds: 60, diagnosticLog: true });
   saveSettings(file, { ...DEFAULTS });
   assert.equal(loadSettings(file).terminalAnswering, false);
 });
@@ -102,4 +103,17 @@ test('saveSettings keeps holdSeconds, and an invalid one is saved as the default
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).holdSeconds, 45);
   saveSettings(file, { ...DEFAULTS, holdSeconds: 9999 });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).holdSeconds, 60);
+});
+
+test('diagnosticLog is on by default and only a boolean changes it', () => {
+  const file = path.join(tmpDir(), 'settings.json');
+  for (const value of [1, 'false', null, {}, 0]) {
+    fs.writeFileSync(file, JSON.stringify({ diagnosticLog: value }));
+    assert.equal(loadSettings(file).diagnosticLog, true, JSON.stringify(value));
+  }
+  fs.writeFileSync(file, JSON.stringify({ diagnosticLog: false }));
+  assert.equal(loadSettings(file).diagnosticLog, false);
+  saveSettings(file, { ...DEFAULTS, diagnosticLog: false });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).diagnosticLog, false);
+  assert.equal(loadSettings(file).diagnosticLog, false);
 });
