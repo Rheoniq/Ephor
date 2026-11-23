@@ -12,9 +12,11 @@ function demoPlan(contents, current) {
 
 // Fixed fake sessions for HUDDLE_DEMO=1, so the UI can be checked without
 // reading ~/.claude. `planItems` are update_plan items as the plan reader
-// returns them (no key means no plan). Seven sessions, six of them shown: two
-// run in a terminal (`source: 'terminal'`, no hostSessionId), the rest in
-// Claude Desktop.
+// returns them (no key means no plan). `pendingAgents` is the number of
+// background agents still running (no key means none); main turns an idle
+// session with pending agents into busy, as it does for real sessions. Seven
+// sessions, six of them shown: two run in a terminal (`source: 'terminal'`,
+// no hostSessionId), the rest in Claude Desktop.
 function demoSessions() {
   const now = Date.now();
   const base = { cwd: 'C:\\demo', pid: 0, updatedAt: now, source: 'desktop' };
@@ -48,6 +50,8 @@ function demoSessions() {
       name: 'Review the invoice export and fix the totals',
       status: 'idle',
       before: 'busy',
+      // Its agents are done, so it shows as finished.
+      pendingAgents: 0,
       planItems: demoPlan(['Read the export', 'Fix the totals', 'Add a test', 'Run the tests'], 5),
     },
     {
@@ -60,11 +64,14 @@ function demoSessions() {
     },
     {
       ...base,
-      // No plan: the panel shows it without a bar.
+      // No plan: the panel shows it without a bar. Idle in the registry, but
+      // two background agents still run, so it shows as working and never
+      // as finished.
       sessionId: 'demo-long',
       hostSessionId: 'local_demo-long',
       name: 'A very long session name with <b>x</b> markup that must be shown literally and truncated',
-      status: 'busy',
+      status: 'idle',
+      pendingAgents: 2,
     },
     {
       ...terminal,

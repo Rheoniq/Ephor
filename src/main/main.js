@@ -21,7 +21,7 @@ const {
 
 const { readSessions, pidIsAlive } = require('./sessions');
 const { createDismissals } = require('./dismissals');
-const { transcriptPath } = require('./paths');
+const { transcriptPath, subagentsPath } = require('./paths');
 const { openClaudeDesktop, focusWindowOf } = require('./focus');
 const { createHostResolver, loadProcessTable, windowsOf, folderNameOf } = require('./host');
 const {
@@ -43,6 +43,7 @@ const {
   isShown,
 } = require('./panel');
 const { createPlanReader } = require('./plan-reader');
+const { createAgentReader, createAgentSource, effectiveStatus } = require('./agent-reader');
 const { demoSessions, demoPrompts } = require('./demo');
 const { loginItemTarget } = require('./login');
 const { loadSettings, saveSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('./settings');
@@ -131,6 +132,17 @@ const planSource = createPlanSource(
   (s) => transcriptPath(HOME, s.cwd, s.sessionId),
   (id, err) => console.error(`[huddle] reading the plan for ${id} failed: ${err.message}`),
 );
+// One agent reader for all sessions: a registry-idle session whose transcript
+// shows background agents still running counts as busy (agent-reader.js).
+// Not used in demo mode (demo sessions carry a fixed pendingAgents).
+const agentSource = createAgentSource(
+  createAgentReader(),
+  (s) =>
+    typeof s.cwd === 'string' && s.cwd && typeof s.sessionId === 'string' && s.sessionId
+      ? { transcript: transcriptPath(HOME, s.cwd, s.sessionId), subagents: subagentsPath(HOME, s.cwd, s.sessionId) }
+      : null,
+  (line) => console.log(`[huddle] ${line}`),
+);
 let win = null;
 // The expanded panel's top (see panelTarget).
 const panelAnchor = createPanelAnchor();
@@ -214,7 +226,12 @@ function shownSessions(candidates) {
 
 // Returns all kept sessions (before visibility filtering) and the snapshot.
 function buildDemoSnapshot() {
-  const kept = demoSessions();
+  // A demo session's fixed pendingAgents turns idle into busy as running
+  // agents do for real sessions; no transcript is read.
+  const kept = demoSessions().map((s) => {
+    const status = effectiveStatus(s.status, s.pendingAgents);
+    return status === s.status ? s : { ...s, status };
+  });
   // Demo statuses never change, so the first read is primed with each demo
   // session's `before` status; a session busy before and idle now is finished.
   if (!demoPrimed) {
@@ -252,8 +269,15 @@ function buildSnapshot() {
   // file left behind whose pid is gone or now belongs to a claude or node
   // process that started at another time) is dropped, until its pid or
   // procStart changes; the grace copy of a just-marked entry goes here.
-  const kept = read.filter((s) => !hostLookups.isStale(s));
-  const keptIds = kept.map((s) => s.sessionId);
+  const registryKept = read.filter((s) => !hostLookups.isStale(s));
+  const keptIds = registryKept.map((s) => s.sessionId);
+  agentSource.prune(keptIds);
+  // The effective status, once per read and before anything below looks at
+  // a status: a registry-idle session with background agents still running
+  // is a busy copy, so the finished tracker, the toasts, the dismissals, the
+  // shown rule and the snapshot all agree. 'waiting' never changes. Hidden
+  // and dismissed sessions go through it too.
+  const kept = agentSource.apply(registryKept);
   lastStatus = new Map(kept.map((s) => [s.sessionId, s.status]));
   dismissals.prune(keptIds);
   finished.update(kept);

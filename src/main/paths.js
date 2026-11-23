@@ -15,4 +15,10 @@ function transcriptPath(homeDir, cwd, sessionId) {
   return path.join(homeDir, '.claude', 'projects', encodeCwd(cwd), `${sessionId}.jsonl`);
 }
 
-module.exports = { encodeCwd, transcriptPath };
+// The transcripts of a session's subagents live next to its transcript, in
+// ~/.claude/projects/<encoded-cwd>/<sessionId>/subagents/agent-<agentId>.jsonl.
+function subagentsPath(homeDir, cwd, sessionId) {
+  return path.join(homeDir, '.claude', 'projects', encodeCwd(cwd), String(sessionId), 'subagents');
+}
+
+module.exports = { encodeCwd, transcriptPath, subagentsPath };

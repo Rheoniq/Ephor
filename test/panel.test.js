@@ -12,6 +12,12 @@ const {
   findOpenable,
 } = require('../src/main/panel');
 const { demoSessions } = require('../src/main/demo');
+const { effectiveStatus } = require('../src/main/agent-reader');
+const { createFinished } = require('../src/main/finished');
+
+// A demo session's status as main uses it: registry status plus its fixed
+// pendingAgents (see main.js buildDemoSnapshot).
+const demoStatus = (s) => effectiveStatus(s.status, s.pendingAgents);
 
 const shown = (status, o = {}) =>
   isShown({ status, finished: false, hasPrompt: false, dismissalsVisible: true, ...o });
@@ -367,9 +373,10 @@ test('toSnapshotSession sends no steps list, even when the session has one', () 
 test('demo sessions: the planned plans, and no last command', () => {
   const sessions = demoSessions();
   for (const s of sessions) assert.equal('lastCommand' in s, false, s.sessionId);
-  // Shown in the panel: busy, waiting, or finished (idle now, busy before).
+  // Shown in the panel: busy (or idle with agents), waiting, or finished
+  // (idle now, busy before).
   const shownPlans = sessions
-    .filter((s) => s.status !== 'idle' || s.before === 'busy')
+    .filter((s) => demoStatus(s) !== 'idle' || s.before === 'busy')
     .map((s) => snapshotPlan(s.planItems));
   const active = (total, current, phase) =>
     shownPlans.some(
@@ -385,8 +392,30 @@ test('demo sessions: the planned plans, and no last command', () => {
   assert.ok(completeFor((s) => s.status === 'idle' && s.before === 'busy'));
   assert.ok(completeFor((s) => s.status === 'busy'));
   assert.ok(sessions.length <= 7);
-  const isShownDemo = (s) => s.status !== 'idle' || s.before === 'busy';
+  const isShownDemo = (s) => demoStatus(s) !== 'idle' || s.before === 'busy';
   assert.ok(sessions.filter(isShownDemo).length <= 6);
+});
+
+test('demo sessions: an idle one with running agents shows as working, an idle finished one as finished', () => {
+  const sessions = demoSessions();
+  const withAgents = sessions.filter((s) => s.status === 'idle' && s.pendingAgents > 0);
+  assert.equal(withAgents.length, 1);
+  const finishedOnes = sessions.filter((s) => s.status === 'idle' && s.before === 'busy' && !(s.pendingAgents > 0));
+  assert.ok(finishedOnes.length >= 1);
+  // The same priming and update main does in demo mode, on effective statuses.
+  const kept = sessions.map((s) => ({ ...s, status: demoStatus(s) }));
+  const finished = createFinished();
+  finished.update(kept.map((s) => ({ sessionId: s.sessionId, status: s.before || s.status })));
+  finished.update(kept);
+  const agents = kept.find((s) => s.sessionId === withAgents[0].sessionId);
+  assert.equal(agents.status, 'busy');
+  assert.equal(finished.isFinished(agents.sessionId), false);
+  assert.equal(isShown({ status: agents.status, finished: false, hasPrompt: false, dismissalsVisible: true }), true);
+  for (const s of finishedOnes) assert.equal(finished.isFinished(s.sessionId), true, s.sessionId);
+  // Every pendingAgents value is a plain non-negative integer.
+  for (const s of sessions) {
+    if ('pendingAgents' in s) assert.ok(Number.isInteger(s.pendingAgents) && s.pendingAgents >= 0, s.sessionId);
+  }
 });
 
 test('demo sessions: two terminal sessions, a busy one with a plan and a finished one, without hostSessionId', () => {
