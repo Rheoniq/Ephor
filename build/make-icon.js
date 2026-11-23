@@ -1,6 +1,6 @@
 'use strict';
 
-// Generates the plain Huddle icon with no dependencies:
+// Generates the plain Ephor icon with no dependencies:
 //   src/assets/icon.png  (256x256, used for the tray at runtime)
 //   build/icon.ico       (256x256 PNG-in-ICO, used by electron-builder for the exe)
 // Run: node build/make-icon.js

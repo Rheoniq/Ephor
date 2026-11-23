@@ -317,7 +317,7 @@ async function startMain(t, { holdMs = HOLD_MS } = {}) {
       port,
       method: 'POST',
       path: '/hook',
-      headers: { 'x-huddle-token': TOKEN, 'content-type': 'application/json' },
+      headers: { 'x-ephor-token': TOKEN, 'content-type': 'application/json' },
       agent: false,
     });
     const status = new Promise((resolve) => {

@@ -190,7 +190,7 @@ function holdState(entry, now) {
 // approve with one message. An answer (or an arm) sooner than
 // MIN_ANSWER_AGE_MS after the prompt was held is refused: the card may have
 // appeared under a click meant for the row that was there before. Allow on
-// a permission prompt needs an arm first (huddle:arm) and then the allow
+// a permission prompt needs an arm first (ephor:arm) and then the allow
 // MIN_CONFIRM_MS to ARM_MS later, so one double-click cannot approve.
 const MIN_ANSWER_AGE_MS = 500;
 const MIN_CONFIRM_MS = 400;

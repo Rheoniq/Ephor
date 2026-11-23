@@ -2,7 +2,7 @@
 
 // Start-at-login: which exe (and args) Windows should launch at login.
 // The state itself lives only in Electron's login item settings
-// (app.setLoginItemSettings / getLoginItemSettings); Huddle stores nothing.
+// (app.setLoginItemSettings / getLoginItemSettings); Ephor stores nothing.
 
 // - Portable build: process.execPath is a temp extraction folder that changes
 //   per run, so use the real exe path electron-builder exposes in

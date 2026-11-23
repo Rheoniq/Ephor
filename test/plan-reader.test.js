@@ -33,7 +33,7 @@ function items(count, active = 0) {
 let dir;
 let file;
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-plan-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ephor-plan-'));
   file = path.join(dir, 't.jsonl');
 });
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });

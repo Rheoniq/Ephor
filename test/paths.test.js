@@ -11,12 +11,12 @@ test('encodeCwd replaces every non-alphanumeric character with a dash', () => {
 });
 
 test('transcriptPath builds projects/<encoded-cwd>/<sessionId>.jsonl under home', () => {
-  const p = transcriptPath('/h', 'C:\\Code\\Huddle', 'abc-123');
-  assert.equal(p, path.join('/h', '.claude', 'projects', 'C--Code-Huddle', 'abc-123.jsonl'));
+  const p = transcriptPath('/h', 'C:\\Code\\Ephor', 'abc-123');
+  assert.equal(p, path.join('/h', '.claude', 'projects', 'C--Code-Ephor', 'abc-123.jsonl'));
 });
 
 test('subagentsPath builds projects/<encoded-cwd>/<sessionId>/subagents next to the transcript', () => {
-  const p = subagentsPath('/h', 'C:\\Code\\Huddle', 'abc-123');
-  assert.equal(p, path.join('/h', '.claude', 'projects', 'C--Code-Huddle', 'abc-123', 'subagents'));
-  assert.equal(path.dirname(path.dirname(p)), path.dirname(transcriptPath('/h', 'C:\\Code\\Huddle', 'abc-123')));
+  const p = subagentsPath('/h', 'C:\\Code\\Ephor', 'abc-123');
+  assert.equal(p, path.join('/h', '.claude', 'projects', 'C--Code-Ephor', 'abc-123', 'subagents'));
+  assert.equal(path.dirname(path.dirname(p)), path.dirname(transcriptPath('/h', 'C:\\Code\\Ephor', 'abc-123')));
 });

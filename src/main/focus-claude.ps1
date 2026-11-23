@@ -5,7 +5,7 @@
 #             3 = no Claude Desktop window found.
 $ErrorActionPreference = 'Stop'
 
-Add-Type -Namespace HuddleFocus -Name Win32 -MemberDefinition @'
+Add-Type -Namespace EphorFocus -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
@@ -21,10 +21,10 @@ $proc = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
 if (-not $proc) { exit 3 }
 
 $hwnd = $proc.MainWindowHandle
-if ([HuddleFocus.Win32]::IsIconic($hwnd)) {
-  [void][HuddleFocus.Win32]::ShowWindow($hwnd, 9)  # SW_RESTORE
+if ([EphorFocus.Win32]::IsIconic($hwnd)) {
+  [void][EphorFocus.Win32]::ShowWindow($hwnd, 9)  # SW_RESTORE
 }
-[void][HuddleFocus.Win32]::SetForegroundWindow($hwnd)
+[void][EphorFocus.Win32]::SetForegroundWindow($hwnd)
 
-if ([HuddleFocus.Win32]::GetForegroundWindow() -eq $hwnd) { exit 0 }
+if ([EphorFocus.Win32]::GetForegroundWindow() -eq $hwnd) { exit 0 }
 exit 2

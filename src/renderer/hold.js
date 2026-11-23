@@ -2,7 +2,7 @@
 
 // Holds incoming snapshots while a pointer is down on the list, so a re-render
 // cannot replace the button under a press and swallow the click. Plain script:
-// in the page it sets window.HuddleHold, under Node it is a CommonJS module.
+// in the page it sets window.EphorHold, under Node it is a CommonJS module.
 
 (function (root) {
   function createSnapshotHold(apply) {
@@ -35,5 +35,5 @@
 
   const api = { createSnapshotHold };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddleHold = api;
+  else root.EphorHold = api;
 })(typeof window !== 'undefined' ? window : globalThis);

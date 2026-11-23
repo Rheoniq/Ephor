@@ -5,7 +5,7 @@
 // the checklist rows.
 // The plan comes from the snapshot (panel.js snapshotPlan); its text is
 // model output, so the renderer sets it with textContent only. Plain script:
-// in the page it sets window.HuddleProgress, under Node it is a CommonJS
+// in the page it sets window.EphorProgress, under Node it is a CommonJS
 // module.
 
 (function (root) {
@@ -127,5 +127,5 @@
 
   const api = { barLabel, showsBar, fillPercent, planRows, cutText, isPlan, PHASE_MAX };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddleProgress = api;
+  else root.EphorProgress = api;
 })(typeof window !== 'undefined' ? window : globalThis);

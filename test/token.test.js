@@ -8,7 +8,7 @@ const path = require('node:path');
 const { loadOrCreateToken, setupCommand } = require('../src/main/token');
 
 function tempFile(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-token-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ephor-token-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return path.join(dir, 'sub', 'hook-token');
 }
@@ -97,7 +97,7 @@ test('surrounding whitespace in the file is ignored', (t) => {
   assert.equal(loadOrCreateToken(file), token);
 });
 
-test('setupCommand is a setx line for HUDDLE_HOOK_TOKEN with the token', () => {
+test('setupCommand is a setx line for EPHOR_HOOK_TOKEN with the token', () => {
   const token = 'a'.repeat(64);
-  assert.equal(setupCommand(token), `setx HUDDLE_HOOK_TOKEN ${token}`);
+  assert.equal(setupCommand(token), `setx EPHOR_HOOK_TOKEN ${token}`);
 });

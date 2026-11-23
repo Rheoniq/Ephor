@@ -80,7 +80,7 @@ function request(port, { method = 'POST', path = '/hook', token = TOKEN, body, c
   else if (typeof body === 'string' || Buffer.isBuffer(body)) payload = body;
   else payload = JSON.stringify(body);
   const headers = {};
-  if (token !== null) headers['x-huddle-token'] = token;
+  if (token !== null) headers['x-ephor-token'] = token;
   if (payload !== undefined) headers['content-type'] = 'application/json';
   Object.assign(headers, extra);
   const req = http.request({ host: '127.0.0.1', port, method, path, headers, setHost, agent: false });
@@ -250,7 +250,7 @@ test('a body declared far over the limit is cut at once and the server keeps ser
     method: 'POST',
     path: '/hook',
     agent: false,
-    headers: { 'x-huddle-token': TOKEN, 'content-length': String(64 * 1024 * 1024) },
+    headers: { 'x-ephor-token': TOKEN, 'content-length': String(64 * 1024 * 1024) },
   });
   // The client sees a 204 or a reset, depending on timing; both end it.
   const ended = new Promise((resolve) => {

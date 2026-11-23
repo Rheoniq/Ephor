@@ -1,7 +1,7 @@
 'use strict';
 
 // The hook timeout notice. When Claude Code closes a held question's
-// connection long before Huddle's own hold would end, its hook timeout is
+// connection long before Ephor's own hold would end, its hook timeout is
 // shorter than the hold: the card goes while the question stays open in the
 // app. Main says so once per run.
 //

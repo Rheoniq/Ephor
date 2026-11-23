@@ -1,6 +1,6 @@
 'use strict';
 
-// Huddle main process: watches the Claude Code session registry (read-only),
+// Ephor main process: watches the Claude Code session registry (read-only),
 // builds snapshots and pushes them to a small always-on-top panel.
 
 const fs = require('node:fs');
@@ -72,18 +72,18 @@ const { loadOrCreateToken, setupCommand } = require('./token');
 const { createControls, hideTitle } = require('./controls');
 const { createWindowDrag, createPanelAnchor, placeNear } = require('../renderer/drag');
 
-// HUDDLE_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
-// HUDDLE_DEMO_THEME=light|dark forces the theme (demo only).
-// HUDDLE_DEMO_SHOT=<file.png> saves a screenshot after render and quits
+// EPHOR_DEMO=1 feeds fixed fake sessions instead of reading ~/.claude.
+// EPHOR_DEMO_THEME=light|dark forces the theme (demo only).
+// EPHOR_DEMO_SHOT=<file.png> saves a screenshot after render and quits
 // (demo only, never in a packaged build: it runs script in the page and
 // writes a file).
-// HUDDLE_DEMO_TOAST=1 pushes one fake toast 1 s after load (demo only,
+// EPHOR_DEMO_TOAST=1 pushes one fake toast 1 s after load (demo only,
 // never in a packaged build).
-const DEMO = process.env.HUDDLE_DEMO === '1';
+const DEMO = process.env.EPHOR_DEMO === '1';
 const DEMO_FROM_SOURCE = DEMO && !app.isPackaged;
-const DEMO_THEME = DEMO ? process.env.HUDDLE_DEMO_THEME : undefined;
-const DEMO_SHOT = DEMO_FROM_SOURCE ? process.env.HUDDLE_DEMO_SHOT : undefined;
-const DEMO_TOAST = DEMO_FROM_SOURCE && process.env.HUDDLE_DEMO_TOAST === '1';
+const DEMO_THEME = DEMO ? process.env.EPHOR_DEMO_THEME : undefined;
+const DEMO_SHOT = DEMO_FROM_SOURCE ? process.env.EPHOR_DEMO_SHOT : undefined;
+const DEMO_TOAST = DEMO_FROM_SOURCE && process.env.EPHOR_DEMO_TOAST === '1';
 
 const HOME = os.homedir();
 const SESSIONS_DIR = path.join(HOME, '.claude', 'sessions');
@@ -133,7 +133,7 @@ const snapshotGate = createSnapshotGate();
 const planSource = createPlanSource(
   createPlanReader(),
   (s) => transcriptPath(HOME, s.cwd, s.sessionId),
-  (id, err) => console.error(`[huddle] reading the plan for ${id} failed: ${err.message}`),
+  (id, err) => console.error(`[ephor] reading the plan for ${id} failed: ${err.message}`),
 );
 // One agent reader for all sessions: a registry-idle session whose transcript
 // shows background agents still running counts as busy (agent-reader.js).
@@ -149,7 +149,7 @@ let stateLogger = createStateLogger(diagLine);
 const agentSource = createAgentSource(
   createAgentReader(),
   (s) => agentFiles(HOME, s),
-  (line) => console.log(`[huddle] ${line}`),
+  (line) => console.log(`[ephor] ${line}`),
   { diag: diagLine },
 );
 let win = null;
@@ -199,7 +199,7 @@ const hostLookups = DEMO
   ? null
   : createHostLookups({
       lookup: (pid, startKey, options) => hostResolver.lookup(pid, startKey, options),
-      log: (line) => console.log(`[huddle] ${line}`),
+      log: (line) => console.log(`[ephor] ${line}`),
       onResolved: () => {
         if (!quitting) scheduleRefresh();
       },
@@ -345,7 +345,7 @@ function setDiagnosticLog(on) {
   settings.diagnosticLog = on === true;
   persistSettings();
   if (settings.diagnosticLog) stateLogger = createStateLogger(diagLine);
-  console.log(`[huddle] diagnostic log: ${settings.diagnosticLog ? 'on' : 'off'}`);
+  console.log(`[ephor] diagnostic log: ${settings.diagnosticLog ? 'on' : 'off'}`);
 }
 
 // --- Answering prompts -----------------------------------------------------
@@ -409,7 +409,7 @@ function findBuddy(parsed) {
 function setTerminalAnswering(on) {
   settings.terminalAnswering = on === true;
   persistSettings();
-  console.log(`[huddle] answering terminal prompts: ${settings.terminalAnswering ? 'on' : 'off'}`);
+  console.log(`[ephor] answering terminal prompts: ${settings.terminalAnswering ? 'on' : 'off'}`);
   if (!settings.terminalAnswering && hookServer) {
     let ended = false;
     for (const entry of [...prompts.values()]) {
@@ -431,7 +431,7 @@ function onPrompt({ id, sessionId, parsed }) {
   if (!view) throw new Error('prompt cannot be shown');
   prompts.set(id, createHold({ id, sessionId, parsed, view, now: performance.now(), holdMs }));
   try {
-    console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
+    console.log(`[ephor] prompt held: ${view.kind} for ${sessionId}`);
     // A collapsed pill opens so the card can be seen; it closes again when
     // no hold is left (afterHoldEnded). Not persisted.
     if (visibility.expandForPrompt()) {
@@ -464,14 +464,14 @@ function onCancel(id) {
     afterHoldEnded();
     scheduleRefresh();
   } catch (err) {
-    console.error(`[huddle] ending a prompt failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] ending a prompt failed: ${err && err.message ? err.message : err}`);
   }
 }
 
 // The tray note and tooltip say when answering is off.
 function updateTray() {
   rebuildTrayMenu();
-  if (tray && !tray.isDestroyed()) tray.setToolTip(answeringNote ? `Huddle\n${answeringNote}` : 'Huddle');
+  if (tray && !tray.isDestroyed()) tray.setToolTip(answeringNote ? `Ephor\n${answeringNote}` : 'Ephor');
 }
 
 async function startAnswering() {
@@ -482,7 +482,7 @@ async function startAnswering() {
   } catch (err) {
     // Unreadable (other than missing) or not savable: the file is left as it
     // is and nothing is answered this run.
-    console.error(`[huddle] hook token file unusable: ${err && err.code ? err.code : err}`);
+    console.error(`[ephor] hook token file unusable: ${err && err.code ? err.code : err}`);
     answeringNote = 'Answering off: token file unusable';
     updateTray();
     return;
@@ -510,7 +510,7 @@ async function listenForHooks() {
   try {
     state = await server.start();
   } catch (err) {
-    console.error(`[huddle] hook server failed to start: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] hook server failed to start: ${err && err.message ? err.message : err}`);
     state = 'failed';
   }
   // before-quit stops the server; nothing more to do here.
@@ -519,14 +519,14 @@ async function listenForHooks() {
     hookServer = server;
     answeringNote = null;
     const address = server.address();
-    console.log(`[huddle] answering on 127.0.0.1:${address ? address.port : HOOK_PORT}`);
+    console.log(`[ephor] answering on 127.0.0.1:${address ? address.port : HOOK_PORT}`);
   } else {
     answeringNote = state === 'in-use' ? `Answering off: port ${HOOK_PORT} in use` : 'Answering off: hook server failed';
-    console.error(`[huddle] answering off: port ${HOOK_PORT} ${state}; trying again in ${ANSWER_RETRY_MS / 1000} s`);
+    console.error(`[ephor] answering off: port ${HOOK_PORT} ${state}; trying again in ${ANSWER_RETRY_MS / 1000} s`);
     if (state === 'in-use') showPortNotice();
     answerRetryTimer = setTimeout(() => {
       listenForHooks().catch((err) => {
-        console.error(`[huddle] answering retry failed: ${err && err.stack ? err.stack : err}`);
+        console.error(`[ephor] answering retry failed: ${err && err.stack ? err.stack : err}`);
       });
     }, ANSWER_RETRY_MS);
   }
@@ -561,16 +561,16 @@ function checkAbortNotice() {
       (text) => {
         const toast = { sessionId: null, kind: 'notice', name: text };
         if (!toastAllowed(toast, toastState())) {
-          console.log(`[huddle] ${text} (quiet mode: no toast)`);
+          console.log(`[ephor] ${text} (quiet mode: no toast)`);
           return false;
         }
-        console.log(`[huddle] ${text}`);
+        console.log(`[ephor] ${text}`);
         toastQueue.push(toast);
         return true;
       },
     );
   } catch (err) {
-    console.error(`[huddle] the hook timeout notice failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] the hook timeout notice failed: ${err && err.message ? err.message : err}`);
   }
 }
 
@@ -589,7 +589,7 @@ function loadDemoPrompts() {
 function copySetupCommand() {
   if (!hookToken) return;
   clipboard.writeText(setupCommand(hookToken));
-  console.log('[huddle] token setup command copied');
+  console.log('[ephor] token setup command copied');
 }
 
 // What the toast gate needs to know about the panel right now.
@@ -699,7 +699,7 @@ function showToast(toast) {
       try {
         if (toastWin === w) closeToast();
       } catch (err) {
-        console.error(`[huddle] closing a broken toast failed: ${err && err.message ? err.message : err}`);
+        console.error(`[ephor] closing a broken toast failed: ${err && err.message ? err.message : err}`);
       }
     });
   };
@@ -712,7 +712,7 @@ function showToast(toast) {
     query: { name: String(toast.name || ''), kind: String(toast.kind) },
   });
   toastTimer = setTimeout(closeToast, TOAST_MS);
-  console.log(`[huddle] toast: ${toast.kind}${toast.sessionId ? ` ${toast.sessionId}` : ''}`);
+  console.log(`[ephor] toast: ${toast.kind}${toast.sessionId ? ` ${toast.sessionId}` : ''}`);
 }
 
 // The toast's close cross: the toast goes at once and the queue moves on,
@@ -756,7 +756,7 @@ function persistSettings() {
 
 function sendUiState() {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send('huddle:ui-state', {
+  win.webContents.send('ephor:ui-state', {
     collapsed: visibility.isCollapsed(),
     hideTitle: hideTitle(hotkeyNote ? null : settings.hotkey),
   });
@@ -776,11 +776,11 @@ function panelOnScreen() {
 // tray checkbox is rebuilt from the real state either way.
 function setHidden(hidden) {
   if (visibility.setHidden(hidden, panelOnScreen())) {
-    console.log(`[huddle] panel ${visibility.isHidden() ? 'hidden' : 'shown'}`);
+    console.log(`[ephor] panel ${visibility.isHidden() ? 'hidden' : 'shown'}`);
     if (visibility.isHidden()) cancelAllHolds();
     updateVisibility(lastSnapshot.sessions.length);
   } else if (hidden && !visibility.isHidden()) {
-    console.log('[huddle] hide ignored: the panel is not on screen');
+    console.log('[ephor] hide ignored: the panel is not on screen');
   }
   rebuildTrayMenu();
 }
@@ -863,11 +863,11 @@ function registerHotkey() {
   try {
     ok = globalShortcut.register(accel, toggleHidden);
   } catch (err) {
-    console.error(`[huddle] hotkey ${accel} rejected: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] hotkey ${accel} rejected: ${err && err.message ? err.message : err}`);
     ok = false;
   }
   hotkeyNote = ok ? null : `Hotkey ${accel} unavailable`;
-  if (!ok) console.error(`[huddle] ${hotkeyNote}`);
+  if (!ok) console.error(`[ephor] ${hotkeyNote}`);
 }
 
 function refresh() {
@@ -876,7 +876,7 @@ function refresh() {
     refreshUnsafe();
   } catch (err) {
     // Keep lastSnapshot and keep polling; the next refresh may succeed.
-    console.error(`[huddle] refresh failed: ${err && err.stack ? err.stack : err}`);
+    console.error(`[ephor] refresh failed: ${err && err.stack ? err.stack : err}`);
   }
 }
 
@@ -885,11 +885,11 @@ function refreshUnsafe() {
   lastSnapshot = snapshot;
   const count = lastSnapshot.sessions.length;
   if (count !== lastCount) {
-    console.log(`[huddle] visible sessions: ${count}`);
+    console.log(`[ephor] visible sessions: ${count}`);
     lastCount = count;
   }
   if (win && !win.isDestroyed() && snapshotGate.shouldSend(lastSnapshot)) {
-    win.webContents.send('huddle:snapshot', lastSnapshot);
+    win.webContents.send('ephor:snapshot', lastSnapshot);
   }
   updateVisibility(count);
   // After endStaleHolds (in buildSnapshot), so a hold main just ended is
@@ -901,7 +901,7 @@ function refreshUnsafe() {
     notifyEvents(kept);
   } catch (err) {
     // A toast failure is logged; the panel was already updated.
-    console.error(`[huddle] toast events failed: ${err && err.stack ? err.stack : err}`);
+    console.error(`[ephor] toast events failed: ${err && err.stack ? err.stack : err}`);
   }
 }
 
@@ -968,7 +968,7 @@ function createWindow() {
     panelHealth.loaded();
     // A (re)loaded page has nothing yet: always send the current state.
     sendUiState();
-    win.webContents.send('huddle:snapshot', lastSnapshot);
+    win.webContents.send('ephor:snapshot', lastSnapshot);
     snapshotGate.mark(lastSnapshot);
     if (DEMO_SHOT) setTimeout(takeDemoShot, 800);
     if (DEMO_TOAST && !demoToastSent) {
@@ -982,7 +982,7 @@ function createWindow() {
 function loadPanelPage() {
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html')).catch((err) => {
     // Holding stays off until a load finishes (panelHealth).
-    console.error(`[huddle] loading the panel failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] loading the panel failed: ${err && err.message ? err.message : err}`);
   });
 }
 
@@ -991,13 +991,13 @@ function loadPanelPage() {
 function onPanelGone(details) {
   try {
     const delay = panelHealth.gone(performance.now());
-    console.error(`[huddle] panel page gone (${details && details.reason ? details.reason : 'unknown'}); prompts go to Desktop`);
+    console.error(`[ephor] panel page gone (${details && details.reason ? details.reason : 'unknown'}); prompts go to Desktop`);
     cancelAllHolds();
     if (quitting) return;
     clearTimeout(panelReloadTimer);
     panelReloadTimer = null;
     if (delay === null) {
-      console.error('[huddle] panel page keeps crashing; not reloading it');
+      console.error('[ephor] panel page keeps crashing; not reloading it');
       return;
     }
     panelReloadTimer = setTimeout(() => {
@@ -1005,30 +1005,30 @@ function onPanelGone(details) {
       try {
         if (!quitting && win && !win.isDestroyed()) loadPanelPage();
       } catch (err) {
-        console.error(`[huddle] reloading the panel failed: ${err && err.message ? err.message : err}`);
+        console.error(`[ephor] reloading the panel failed: ${err && err.message ? err.message : err}`);
       }
     }, delay);
   } catch (err) {
-    console.error(`[huddle] handling a gone panel page failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] handling a gone panel page failed: ${err && err.message ? err.message : err}`);
   }
 }
 
 function onPanelHung() {
   try {
     panelHealth.hung();
-    console.error('[huddle] panel page not responding; prompts go to Desktop');
+    console.error('[ephor] panel page not responding; prompts go to Desktop');
     cancelAllHolds();
   } catch (err) {
-    console.error(`[huddle] handling a hung panel page failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] handling a hung panel page failed: ${err && err.message ? err.message : err}`);
   }
 }
 
 function onPanelResponsive() {
   try {
     panelHealth.responsive();
-    console.log('[huddle] panel page responding again');
+    console.log('[ephor] panel page responding again');
   } catch (err) {
-    console.error(`[huddle] handling a responsive panel page failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] handling a responsive panel page failed: ${err && err.message ? err.message : err}`);
   }
 }
 
@@ -1057,14 +1057,14 @@ async function takeDemoShot() {
       try {
         const image = await win.webContents.capturePage();
         fs.writeFileSync(DEMO_SHOT, image.toPNG());
-        console.log(`[huddle] demo screenshot saved: ${DEMO_SHOT}`);
+        console.log(`[ephor] demo screenshot saved: ${DEMO_SHOT}`);
         break;
       } catch (err) {
         if (attempt >= 3) throw err;
       }
     }
   } catch (err) {
-    console.error(`[huddle] demo screenshot failed: ${err.message}`);
+    console.error(`[ephor] demo screenshot failed: ${err.message}`);
   }
   app.quit();
 }
@@ -1090,10 +1090,10 @@ function setStartAtLogin(enabled) {
   try {
     const target = loginTarget();
     app.setLoginItemSettings({ openAtLogin: enabled, path: target.path, args: target.args });
-    console.log(`[huddle] start at login: ${enabled ? 'on' : 'off'}`);
+    console.log(`[ephor] start at login: ${enabled ? 'on' : 'off'}`);
   } catch (err) {
     // The menu is rebuilt from the real state afterwards either way.
-    console.error(`[huddle] setting start at login failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] setting start at login failed: ${err && err.message ? err.message : err}`);
   }
 }
 
@@ -1156,9 +1156,9 @@ function trayMenu() {
 
 function createTray() {
   const image = nativeImage.createFromPath(ICON_PATH);
-  if (image.isEmpty()) console.error(`[huddle] tray icon missing: ${ICON_PATH}`);
+  if (image.isEmpty()) console.error(`[ephor] tray icon missing: ${ICON_PATH}`);
   tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
-  tray.setToolTip('Huddle');
+  tray.setToolTip('Ephor');
   tray.setContextMenu(trayMenu());
 }
 
@@ -1198,15 +1198,15 @@ const controls = createControls({
   dragEnd: () => pillDrag.end(),
 });
 
-ipcMain.on('huddle:hide', (event) => controls.onHide(event));
-ipcMain.on('huddle:quit', (event) => controls.onQuit(event));
-ipcMain.on('huddle:drag-start', (event) => controls.onDragStart(event));
-ipcMain.on('huddle:drag-to', (event, payload) => controls.onDragTo(event, payload));
-ipcMain.on('huddle:drag-end', (event) => controls.onDragEnd(event));
-ipcMain.on('huddle-toast:close', (event) => controls.onToastClose(event));
-ipcMain.on('huddle-toast:clickable', (event, clickable) => controls.onToastClickable(event, clickable));
+ipcMain.on('ephor:hide', (event) => controls.onHide(event));
+ipcMain.on('ephor:quit', (event) => controls.onQuit(event));
+ipcMain.on('ephor:drag-start', (event) => controls.onDragStart(event));
+ipcMain.on('ephor:drag-to', (event, payload) => controls.onDragTo(event, payload));
+ipcMain.on('ephor:drag-end', (event) => controls.onDragEnd(event));
+ipcMain.on('ephor-toast:close', (event) => controls.onToastClose(event));
+ipcMain.on('ephor-toast:clickable', (event, clickable) => controls.onToastClickable(event, clickable));
 
-ipcMain.on('huddle:content-size', (event, height) => {
+ipcMain.on('ephor:content-size', (event, height) => {
   if (!fromOurWindow(event)) return;
   const h = clampHeight(height);
   if (h === null) return;
@@ -1217,7 +1217,7 @@ ipcMain.on('huddle:content-size', (event, height) => {
   setPanelBounds(panelTarget(b, width, h));
 });
 
-ipcMain.on('huddle:dismiss', (event, sessionId) => {
+ipcMain.on('ephor:dismiss', (event, sessionId) => {
   if (!fromOurWindow(event)) return;
   if (typeof sessionId !== 'string' || !lastStatus.has(sessionId)) return;
   // In demo mode lastStatus holds only fake ids, so this touches nothing real.
@@ -1226,7 +1226,7 @@ ipcMain.on('huddle:dismiss', (event, sessionId) => {
   scheduleRefresh();
 });
 
-ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
+ipcMain.on('ephor:set-collapsed', (event, collapsed) => {
   if (!fromOurWindow(event)) return;
   if (typeof collapsed !== 'boolean') return;
   // Only the collapse button and the pill send this: a user action.
@@ -1237,17 +1237,17 @@ ipcMain.on('huddle:set-collapsed', (event, collapsed) => {
 // prompt, so its card comes back instead of waiting for the hold to run out.
 function refuseAnswer(id) {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send('huddle:answer-refused', id);
+  win.webContents.send('ephor:answer-refused', id);
 }
 
 // The first Allow click on a permission card. Main keeps the time, so an
 // allow counts only as a second step 400 ms to 5 s later (answerInTime).
-ipcMain.on('huddle:arm', (event, id) => {
+ipcMain.on('ephor:arm', (event, id) => {
   if (!fromOurWindow(event)) return;
   if (typeof id !== 'string' || id.length > MAX_PROMPT_ID_LEN) return;
   const entry = prompts.get(id);
   if (entry && !armHold(entry, performance.now())) {
-    console.error('[huddle] arm refused: not a permission prompt, or too soon');
+    console.error('[ephor] arm refused: not a permission prompt, or too soon');
     refuseAnswer(entry.id);
   }
 });
@@ -1256,7 +1256,7 @@ ipcMain.on('huddle:arm', (event, id) => {
 // only for a held prompt, only when it fits that prompt exactly (see
 // buildResponse) and only at an acceptable time (see answerInTime); a
 // refused answer is reported back and the card shows again.
-ipcMain.on('huddle:answer', (event, payload) => {
+ipcMain.on('ephor:answer', (event, payload) => {
   if (!fromOurWindow(event)) return;
   const at = performance.now();
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
@@ -1265,23 +1265,23 @@ ipcMain.on('huddle:answer', (event, payload) => {
   if (!entry) return;
   const response = buildResponse(entry.parsed, payload);
   if (!response) {
-    console.error(`[huddle] answer refused: it does not fit the ${entry.view.kind} prompt`);
+    console.error(`[ephor] answer refused: it does not fit the ${entry.view.kind} prompt`);
     refuseAnswer(entry.id);
     return;
   }
   if (!answerInTime(entry, payload, at)) {
-    console.error(`[huddle] answer refused: ${entry.view.kind} prompt answered too soon or not confirmed`);
+    console.error(`[ephor] answer refused: ${entry.view.kind} prompt answered too soon or not confirmed`);
     refuseAnswer(entry.id);
     return;
   }
   prompts.delete(entry.id);
   if (DEMO) {
     // Demo data only, so the payload may be logged.
-    console.log(`[huddle] demo answer payload: ${JSON.stringify(payload)}`);
-    console.log(`[huddle] demo hook response: ${JSON.stringify(response)}`);
+    console.log(`[ephor] demo answer payload: ${JSON.stringify(payload)}`);
+    console.log(`[ephor] demo hook response: ${JSON.stringify(response)}`);
   } else if (hookServer) {
     const sent = hookServer.resolve(entry.id, response);
-    console.log(`[huddle] ${entry.view.kind} prompt answered: ${sent ? 'sent' : 'too late, Desktop decides'}`);
+    console.log(`[ephor] ${entry.view.kind} prompt answered: ${sent ? 'sent' : 'too late, Desktop decides'}`);
   }
   afterHoldEnded();
   scheduleRefresh();
@@ -1294,7 +1294,7 @@ ipcMain.on('huddle:answer', (event, payload) => {
 // cwd and procStart come from main's own registry copy, never from the
 // renderer. Fast repeated clicks on one session share one open, and at most
 // two sessions open at once; a click for a third gets 'failed' at once.
-ipcMain.handle('huddle:open', async (event, request) => {
+ipcMain.handle('ephor:open', async (event, request) => {
   if (!fromOurWindow(event)) return 'failed';
   const target = parseOpenRequest(request, lastSnapshot.sessions);
   if (!target) return 'failed';
@@ -1311,7 +1311,7 @@ const openGate = createOpenGate((_key, target) => runOpen(target), { maxConcurre
 // opens through the arrow's gated open. An open that fails never undoes the
 // release: the answer is 'ok' once the hold is freed. No 500 ms guard: a
 // release answers nothing.
-ipcMain.handle('huddle:release', (event, payload) => {
+ipcMain.handle('ephor:release', (event, payload) => {
   if (!fromOurWindow(event)) return 'failed';
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return 'failed';
   const id = payload.id;
@@ -1320,7 +1320,7 @@ ipcMain.handle('huddle:release', (event, payload) => {
     id,
     prompts,
     resolve: (promptId) => {
-      if (DEMO) console.log('[huddle] demo: prompt released (no hook to end)');
+      if (DEMO) console.log('[ephor] demo: prompt released (no hook to end)');
       else if (hookServer) hookServer.resolve(promptId, null);
     },
     open: (entry) => {
@@ -1333,11 +1333,11 @@ ipcMain.handle('huddle:release', (event, payload) => {
     },
   });
   if (released.result !== 'ok') return 'failed';
-  console.log('[huddle] prompt released to its own app');
+  console.log('[ephor] prompt released to its own app');
   afterHoldEnded();
   scheduleRefresh();
   released.open.then((result) => {
-    if (result === 'failed' || result === 'not-found') console.log(`[huddle] open after release: ${result}`);
+    if (result === 'failed' || result === 'not-found') console.log(`[ephor] open after release: ${result}`);
   });
   return 'ok';
 });
@@ -1346,7 +1346,7 @@ async function runOpen(target) {
   const shown = target.session;
   let result;
   if (DEMO) {
-    console.log(`[huddle] demo: open ${target.kind} ${target.kind === 'desktop' ? shown.hostSessionId : shown.sessionId} (no-op)`);
+    console.log(`[ephor] demo: open ${target.kind} ${target.kind === 'desktop' ? shown.hostSessionId : shown.sessionId} (no-op)`);
     result = 'demo';
   } else if (target.kind === 'desktop') {
     result = await openClaudeDesktop(shown.hostSessionId);
@@ -1360,7 +1360,7 @@ async function runOpen(target) {
   }
   // Only the kind, the session id and the result: never a window title.
   if (result === 'not-found' || result === 'failed') {
-    console.log(`[huddle] open ${target.kind} ${shown.sessionId}: ${result}`);
+    console.log(`[ephor] open ${target.kind} ${shown.sessionId}: ${result}`);
   }
   // A successful open counts as looking at the session: a finished buddy
   // leaves the panel on the next refresh. A failed open, or a host window
@@ -1390,7 +1390,7 @@ if (!app.requestSingleInstanceLock()) {
       : loadSettings(settingsFile);
     holdMs = settings.holdSeconds * 1000;
     if (!DEMO) {
-      diagLog = createDiagLog({ file: path.join(app.getPath('userData'), 'huddle-diag.log') });
+      diagLog = createDiagLog({ file: path.join(app.getPath('userData'), 'ephor-diag.log') });
       diagLine(`start v${APP_VERSION} pid=${process.pid}`);
     }
     visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
@@ -1408,7 +1408,7 @@ if (!app.requestSingleInstanceLock()) {
     startWatching();
     refresh();
     startAnswering().catch((err) => {
-      console.error(`[huddle] answering failed to start: ${err && err.stack ? err.stack : err}`);
+      console.error(`[ephor] answering failed to start: ${err && err.stack ? err.stack : err}`);
     });
   });
 }

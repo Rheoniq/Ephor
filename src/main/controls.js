@@ -24,7 +24,7 @@ function createControls({
     try {
       fn();
     } catch (err) {
-      log(`[huddle] ${what} failed: ${err && err.message ? err.message : err}`);
+      log(`[ephor] ${what} failed: ${err && err.message ? err.message : err}`);
     }
   }
 

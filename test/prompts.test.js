@@ -262,7 +262,7 @@ test('permissionResponse: allow and deny shapes', () => {
   assert.deepEqual(permissionResponse(false), {
     hookSpecificOutput: {
       hookEventName: 'PermissionRequest',
-      decision: { behavior: 'deny', message: 'Denied from Huddle' },
+      decision: { behavior: 'deny', message: 'Denied from Ephor' },
     },
   });
 });

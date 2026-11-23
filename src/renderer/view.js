@@ -4,7 +4,7 @@
 // back arrow. It holds no DOM and no timers: the renderer owns the short
 // delay before an open session whose prompts were all answered or released
 // goes back to the list, and createReturnState says when that delay runs.
-// Plain script: in the page it sets window.HuddleView, under Node it is a
+// Plain script: in the page it sets window.EphorView, under Node it is a
 // CommonJS module.
 
 (function (root) {
@@ -204,5 +204,5 @@
 
   const api = { createViewState, cardKind, escapeGoesBack, backCue, returnStep, createReturnState };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddleView = api;
+  else root.EphorView = api;
 })(typeof window !== 'undefined' ? window : globalThis);

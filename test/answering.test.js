@@ -97,7 +97,7 @@ test('promptView: a permission the card cannot show in full gives null', () => {
   assert.equal(permParsed('Write', { file_path: 'C:\\a.txt', content: 'x' }), null);
 });
 
-test('promptView: an ask Huddle cannot answer in full gives null', () => {
+test('promptView: an ask Ephor cannot answer in full gives null', () => {
   const long = 'x'.repeat(300);
   const cases = {
     'five questions': [q('1?', ['A']), q('2?', ['A']), q('3?', ['A']), q('4?', ['A']), q('5?', ['A'])],

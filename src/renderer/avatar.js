@@ -4,7 +4,7 @@
 // session id, with one of three small variants picked by a second hash, and a
 // face that shows the status. Drawn on a 12 x 12 grid of 3 px cells with
 // crisp edges. Built with createElementNS only, never innerHTML. Plain script:
-// in the page it sets window.HuddleAvatar, under Node it is a CommonJS module.
+// in the page it sets window.EphorAvatar, under Node it is a CommonJS module.
 
 (function (root) {
   const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -142,5 +142,5 @@
 
   const api = { colorIndex, variantIndex, PALETTE, createAvatar };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddleAvatar = api;
+  else root.EphorAvatar = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,6 +1,6 @@
 'use strict';
 
-// Huddle panel renderer. Session names, plan items and commands come from
+// Ephor panel renderer. Session names, plan items and commands come from
 // local files and prompt text comes from hook input: all of it is untrusted
 // and only ever set with textContent, never innerHTML.
 //
@@ -10,14 +10,14 @@
 
 (function () {
   // Words a screen reader hears before a session's name, per card kind
-  // (HuddleView.cardKind).
+  // (EphorView.cardKind).
   const SPOKEN = { 'needs-you': 'Needs you', finished: 'Finished', busy: 'Busy', idle: 'Idle' };
   // The chip on a card's status line. Busy has none: the bar says enough.
   const CHIPS = { 'needs-you': 'Needs you', finished: 'Finished' };
   // After the open session's last prompt is answered or released, the view
   // goes back to the list after this long, unless a new prompt comes first.
   // While the session still waits for an answer without a card (the
-  // handover notice), the delay does not run (HuddleView.createReturnState).
+  // handover notice), the delay does not run (EphorView.createReturnState).
   const RETURN_MS = 700;
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -39,19 +39,19 @@
   const pill = document.getElementById('pill');
   const pillCount = document.getElementById('pill-count');
   const pillAlert = document.getElementById('pill-alert');
-  const view = window.HuddleView.createViewState();
-  const returns = window.HuddleView.createReturnState();
-  const promptStates = new Map(); // prompt id -> HuddlePrompt state
+  const view = window.EphorView.createViewState();
+  const returns = window.EphorView.createReturnState();
+  const promptStates = new Map(); // prompt id -> EphorPrompt state
   // Prompt id -> performance.now() when a snapshot first brought it. The
   // countdown and the line that drains over the hold run from there, also
   // when the card itself is first seen later (its session opened later).
   const promptSeen = new Map();
-  // Prompt id -> the hold in ms from the snapshot's holdMs (HuddlePrompt
+  // Prompt id -> the hold in ms from the snapshot's holdMs (EphorPrompt
   // holdMsOf), for the countdown and the drain line.
   const promptHold = new Map();
   let sessions = [];
   // Avatar colors: sessionId -> palette index, so no two visible sessions
-  // share a color. Updated on each render by HuddleColors.
+  // share a color. Updated on each render by EphorColors.
   let colorOf = new Map();
   let collapsed = false; // set by main through onUiState
   let armTimer = null;
@@ -107,7 +107,7 @@
 
   // The session's avatar color, as createAvatar picks it.
   function colorFor(id) {
-    const { PALETTE, colorIndex } = window.HuddleAvatar;
+    const { PALETTE, colorIndex } = window.EphorAvatar;
     const idx = colorOf.get(id);
     return PALETTE[Number.isInteger(idx) && idx >= 0 && idx < PALETTE.length ? idx : colorIndex(id)];
   }
@@ -121,9 +121,9 @@
       id,
       status,
       name: str(s.name) || 'Untitled session',
-      kind: window.HuddleView.cardKind(s, needs.has(id)),
+      kind: window.EphorView.cardKind(s, needs.has(id)),
       color: colorFor(id),
-      bar: window.HuddleProgress.barLabel(s.plan),
+      bar: window.EphorProgress.barLabel(s.plan),
       isTerminal,
       host: isTerminal ? str(s.host) : '',
     };
@@ -196,7 +196,7 @@
       openTip = 'Open the terminal window';
       openLabel = `Open the terminal window of ${f.name}`;
     }
-    const arrowText = window.HuddlePrompt.arrowText({
+    const arrowText = window.EphorPrompt.arrowText({
       hasHeldPrompt: heldPromptId(s) !== null,
       hasPrompt: !!s.prompt,
       status: f.status,
@@ -213,20 +213,20 @@
     open.addEventListener('click', () => {
       const held = heldPromptId(s);
       const target = openTargetOf(s, f);
-      if (window.HuddlePrompt.arrowAction({ hasHeldPrompt: held !== null }) === 'release') {
+      if (window.EphorPrompt.arrowAction({ hasHeldPrompt: held !== null }) === 'release') {
         // Younger than the minimum age: ignored, nothing is released.
         if (promptStates.get(held).release()) {
-          window.huddle
+          window.ephor
             .release(held)
             .catch(() => 'failed')
             .then((result) => {
-              if (window.HuddlePrompt.arrowAfterRelease(result) === 'open') window.huddle.open(target).catch(() => {});
+              if (window.EphorPrompt.arrowAfterRelease(result) === 'open') window.ephor.open(target).catch(() => {});
             });
           render();
         }
         return;
       }
-      window.huddle.open(target).catch(() => {});
+      window.ephor.open(target).catch(() => {});
     });
     return open;
   }
@@ -247,9 +247,9 @@
     return pv && !pv.answered && !pv.released ? s.prompt.id : null;
   }
 
-  // The handover notice for a session, or null (see HuddlePrompt).
+  // The handover notice for a session, or null (see EphorPrompt).
   function noticeFor(s, f) {
-    return window.HuddlePrompt.handoverNotice({
+    return window.EphorPrompt.handoverNotice({
       status: f.status,
       hasPrompt: !!s.prompt,
       source: s.source,
@@ -272,7 +272,7 @@
       focusable: 'false',
     });
     bar.append(svg('rect', { class: 'bar-track', x: '0', y: '0', width: '100%', height: '4', rx: '2' }));
-    const pct = window.HuddleProgress.fillPercent(plan);
+    const pct = window.EphorProgress.fillPercent(plan);
     if (pct > 0) {
       bar.append(
         svg('rect', { class: 'bar-fill', x: '0', y: '0', width: `${pct.toFixed(2)}%`, height: '4', rx: '2', fill: color }),
@@ -327,7 +327,7 @@
     body.type = 'button';
     body.dataset.role = 'body';
     body.title = f.name;
-    const avatar = window.HuddleAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id));
+    const avatar = window.EphorAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id));
 
     const nameBox = el('span', 'name-box');
     const nameLine = el('span', 'name-line');
@@ -337,7 +337,7 @@
     nameBox.append(nameLine);
     // Screen readers hear the state first and the whole plan step last.
     if (f.bar) nameBox.append(el('span', 'sr-only', `, ${f.bar.spoken}`));
-    if (window.HuddleProgress.showsBar(s.plan, f.status) && f.bar) {
+    if (window.EphorProgress.showsBar(s.plan, f.status) && f.bar) {
       nameBox.append(progressBlock(s.plan, f.bar, f.color, CHIPS[f.kind], f.kind));
     } else {
       const tag = tagLine(f.kind);
@@ -349,7 +349,7 @@
       waiting.setAttribute('aria-hidden', 'true');
       nameBox.append(waiting);
     } else {
-      // Waiting, but Huddle holds no card: the question is open in the app.
+      // Waiting, but Ephor holds no card: the question is open in the app.
       const notice = noticeFor(s, f);
       if (notice) {
         nameBox.append(el('span', 'sr-only', `, ${notice.listLine}`));
@@ -367,7 +367,7 @@
     dismiss.setAttribute('aria-label', `Hide ${f.name} from the panel`);
     dismiss.title = 'Hide until new activity';
     dismiss.append(icon('x'));
-    dismiss.addEventListener('click', () => window.huddle.dismiss(f.id));
+    dismiss.addEventListener('click', () => window.ephor.dismiss(f.id));
 
     // Open and hide stacked at the right of the row, open on top; the DOM
     // order keeps the tab order (body, open, hide).
@@ -385,7 +385,7 @@
     if (!prompt || typeof prompt.id !== 'string') return null;
     let st = promptStates.get(prompt.id);
     if (!st) {
-      st = window.HuddlePrompt.createPromptState();
+      st = window.EphorPrompt.createPromptState();
       if (!st.show(prompt)) return null;
       promptStates.set(prompt.id, st);
     } else if (lastCardId !== prompt.id) {
@@ -407,7 +407,7 @@
   function countdownFor(id) {
     const seen = promptSeen.get(id);
     const elapsed = seen === undefined ? 0 : performance.now() - seen;
-    return window.HuddlePrompt.countdownText(promptHold.get(id), elapsed);
+    return window.EphorPrompt.countdownText(promptHold.get(id), elapsed);
   }
 
   // Under the options: "Answer in <app>" (frees the prompt here and opens
@@ -416,11 +416,11 @@
   // screen readers and still when motion is reduced; the text is the time
   // cue, updated at most once a second and never announced).
   function promptFoot(st, id, s, released) {
-    const label = window.HuddlePrompt.releaseLabel(s.source, s.host);
+    const label = window.EphorPrompt.releaseLabel(s.source, s.host);
     const releaseBtn = el('button', 'release-btn');
     releaseBtn.type = 'button';
     releaseBtn.dataset.role = 'release';
-    releaseBtn.title = window.HuddlePrompt.releaseTitle(s.source, s.host);
+    releaseBtn.title = window.EphorPrompt.releaseTitle(s.source, s.host);
     releaseBtn.append(icon('external', 14), el('span', 'release-text', label));
     releaseBtn.disabled = released;
     releaseBtn.addEventListener('click', () => {
@@ -430,7 +430,7 @@
       // next snapshot drops it. The disabled button cannot keep focus, so it
       // moves to the back button (Escape still goes back from there).
       if (st.release()) {
-        window.huddle.release(id).catch(() => 'failed');
+        window.ephor.release(id).catch(() => 'failed');
         render({ focus: { sessionId: str(s.sessionId), role: 'back' } });
       }
     });
@@ -440,7 +440,7 @@
     const foot = el('div', 'prompt-foot');
     foot.append(releaseBtn, left);
 
-    const holdMs = promptHold.has(id) ? promptHold.get(id) : window.HuddlePrompt.holdMsOf(null);
+    const holdMs = promptHold.has(id) ? promptHold.get(id) : window.EphorPrompt.holdMsOf(null);
     const track = el('div', 'prompt-drain-track');
     track.setAttribute('aria-hidden', 'true');
     const drain = el('span', 'prompt-drain');
@@ -462,7 +462,7 @@
     const id = pv.id;
     const card = el('div', `prompt ${kind}`);
     const kick = el('p', 'prompt-kicker', kicker);
-    kick.id = window.HuddlePrompt.promptDomIds(id).kicker;
+    kick.id = window.EphorPrompt.promptDomIds(id).kicker;
     card.setAttribute('role', 'group');
     card.setAttribute('aria-labelledby', kick.id);
     card.setAttribute('aria-describedby', describedBy.join(' '));
@@ -471,7 +471,7 @@
   }
 
   function sendAnswers(id, result) {
-    if (result.done) window.huddle.answer({ id, kind: 'ask', answers: result.answers });
+    if (result.done) window.ephor.answer({ id, kind: 'ask', answers: result.answers });
     render();
   }
 
@@ -511,7 +511,7 @@
       done.addEventListener('click', () => sendAnswers(pv.id, st.finishMulti()));
       options.append(done);
     }
-    const ids = window.HuddlePrompt.promptDomIds(pv.id);
+    const ids = window.EphorPrompt.promptDomIds(pv.id);
     const text = el('p', 'prompt-text', str(q.question));
     text.id = ids.text;
     return promptCard('ask', 'Question', st, pv, [text, options], [ids.text], s);
@@ -527,7 +527,7 @@
   // into "Allow".
   function scheduleArmExpiry() {
     clearTimeout(armTimer);
-    armTimer = setTimeout(renderWhenFree, window.HuddlePrompt.ARM_MS + 50);
+    armTimer = setTimeout(renderWhenFree, window.EphorPrompt.ARM_MS + 50);
   }
 
   // Allow needs a second click MIN_CONFIRM_MS to ARM_MS after the first;
@@ -545,10 +545,10 @@
     allow.addEventListener('click', () => {
       const wasArmed = st.confirmPending();
       if (st.armAllow() === 'send') {
-        window.huddle.answer({ id: pv.id, kind: 'permission', allow: true });
+        window.ephor.answer({ id: pv.id, kind: 'permission', allow: true });
       } else if (!wasArmed && st.confirmPending()) {
         // A fresh arm: main records it too and takes the allow only after it.
-        window.huddle.arm(pv.id);
+        window.ephor.arm(pv.id);
         scheduleArmExpiry();
       }
       render();
@@ -556,12 +556,12 @@
     const deny = promptButton('Deny', 'deny', 'deny');
     deny.disabled = pv.released;
     deny.addEventListener('click', () => {
-      if (st.deny()) window.huddle.answer({ id: pv.id, kind: 'permission', allow: false });
+      if (st.deny()) window.ephor.answer({ id: pv.id, kind: 'permission', allow: false });
       render();
     });
     const actions = el('div', 'prompt-actions');
     actions.append(deny, allow);
-    const ids = window.HuddlePrompt.promptDomIds(pv.id);
+    const ids = window.EphorPrompt.promptDomIds(pv.id);
     command.id = ids.command;
     return promptCard('permission', 'Run this command?', st, pv, [command, actions], [ids.command], s);
   }
@@ -586,13 +586,13 @@
   // left out: the card already says the session needs you.
   function planSection(s, f, cardShown) {
     const box = el('div', 'sv-plan');
-    if (window.HuddleProgress.showsBar(s.plan, f.status) && f.bar) {
+    if (window.EphorProgress.showsBar(s.plan, f.status) && f.bar) {
       box.append(progressBlock(s.plan, f.bar, f.color, cardShown ? null : CHIPS[f.kind], f.kind));
     } else {
       const tag = tagLine(f.kind, cardShown);
       if (tag) box.append(tag);
     }
-    const rows = window.HuddleProgress.planRows(s.plan);
+    const rows = window.EphorProgress.planRows(s.plan);
     if (rows.length === 0) {
       box.append(el('p', 'no-plan', 'No plan yet'));
       return box;
@@ -623,7 +623,7 @@
     // A prompt or a wait on another session never switches the view; the
     // back button carries it instead: a clay badge with a dot and the count
     // (visible), and the count in the spoken label.
-    const cue = window.HuddleView.backCue([...needs], f.id);
+    const cue = window.EphorView.backCue([...needs], f.id);
     const back = el('button', cue.count ? 'back-btn has-cue' : 'back-btn');
     back.type = 'button';
     back.dataset.role = 'back';
@@ -648,7 +648,7 @@
     const name = el('h2', 'sv-name');
     name.title = f.name;
     name.append(el('span', 'sr-only', `${SPOKEN[f.kind]}: `), document.createTextNode(f.name));
-    head.append(window.HuddleAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id)), name);
+    head.append(window.EphorAvatar.createAvatar(document, f.id, f.status, colorOf.get(f.id)), name);
 
     const card = s.prompt ? renderPrompt(s) : null;
     // No card for a waiting session: the notice stands where the card would.
@@ -686,8 +686,8 @@
     btn.addEventListener('click', () => {
       // A notice that has just appeared may sit under the cursor: a click
       // before the minimum age opens nothing.
-      if (!window.HuddlePrompt.clickAllowed(noticeShownAt, performance.now())) return;
-      window.huddle.open(openTargetOf(s, f)).catch(() => {});
+      if (!window.EphorPrompt.clickAllowed(noticeShownAt, performance.now())) return;
+      window.ephor.open(openTargetOf(s, f)).catch(() => {});
     });
     const foot = el('div', 'handover-foot');
     foot.append(btn);
@@ -828,7 +828,7 @@
     const focus = opts && opts.focus !== undefined ? opts.focus : captureFocus();
 
     const ids = new Set(sessions.map((s) => str(s && s.sessionId)));
-    colorOf = window.HuddleColors.assignColors([...ids], colorOf, window.HuddleAvatar.PALETTE.length);
+    colorOf = window.EphorColors.assignColors([...ids], colorOf, window.EphorAvatar.PALETTE.length);
     const needs = new Set(view.needsYou());
 
     count.textContent = sessions.length ? String(sessions.length) : '';
@@ -889,7 +889,7 @@
     const rect = panel.getBoundingClientRect();
     const style = getComputedStyle(panel);
     const h = rect.height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
-    window.huddle.reportHeight(Math.ceil(h));
+    window.ephor.reportHeight(Math.ceil(h));
   }
 
   new ResizeObserver(reportHeight).observe(panel);
@@ -905,11 +905,11 @@
       if (!s.prompt || typeof s.prompt.id !== 'string') continue;
       promptIds.add(s.prompt.id);
       if (!promptSeen.has(s.prompt.id)) promptSeen.set(s.prompt.id, now);
-      promptHold.set(s.prompt.id, window.HuddlePrompt.holdMsOf(s.prompt));
+      promptHold.set(s.prompt.id, window.EphorPrompt.holdMsOf(s.prompt));
       // The arrow in the list releases a held prompt too, so its state (and
       // its minimum age) starts when the snapshot first brings the prompt.
       if (!promptStates.has(s.prompt.id)) {
-        const st = window.HuddlePrompt.createPromptState();
+        const st = window.EphorPrompt.createPromptState();
         if (st.show(s.prompt)) promptStates.set(s.prompt.id, st);
       }
     }
@@ -933,7 +933,7 @@
     render();
   }
 
-  const hold = window.HuddleHold.createSnapshotHold(applySnapshot);
+  const hold = window.EphorHold.createSnapshotHold(applySnapshot);
 
   // While a pointer is down on the list or the session view, snapshots wait
   // so the pressed button stays the same element until the click lands.
@@ -962,7 +962,7 @@
   // Escape in the session view goes back to the list, like the back button
   // (keyboard only: not in a text-like control, never during a press).
   document.addEventListener('keydown', (ev) => {
-    const go = window.HuddleView.escapeGoesBack({
+    const go = window.EphorView.escapeGoesBack({
       key: ev.key,
       ctrlKey: ev.ctrlKey,
       altKey: ev.altKey,
@@ -982,7 +982,7 @@
   // area would swallow its click; instead the pointer's offset in screen
   // coordinates goes to main (at most once per animation frame), and main
   // moves the window. A press that moved less than the threshold is a click.
-  const dragTracker = window.HuddleDrag.createDragTracker({ threshold: window.HuddleDrag.DEFAULT_THRESHOLD });
+  const dragTracker = window.EphorDrag.createDragTracker({ threshold: window.EphorDrag.DEFAULT_THRESHOLD });
   let dragPointer = null; // pointerId of the press on the pill, or null
   let dragSent = false; // drag-start went to main for this press
   let dragFrame = 0;
@@ -992,7 +992,7 @@
   function sendDragFrame() {
     dragFrame = 0;
     if (!dragPending) return;
-    window.huddle.dragTo(dragPending.dx, dragPending.dy);
+    window.ephor.dragTo(dragPending.dx, dragPending.dy);
     dragPending = null;
   }
 
@@ -1012,7 +1012,7 @@
     }
     dragPending = null;
     const { wasDrag } = dragTracker.end();
-    if (dragSent) window.huddle.dragEnd();
+    if (dragSent) window.ephor.dragEnd();
     dragSent = false;
     return wasDrag;
   }
@@ -1041,7 +1041,7 @@
     if (!m.dragging) return;
     if (!dragSent) {
       dragSent = true;
-      window.huddle.dragStart();
+      window.ephor.dragStart();
     }
     dragPending = { dx: m.dx, dy: m.dy };
     if (!dragFrame) dragFrame = requestAnimationFrame(sendDragFrame);
@@ -1068,7 +1068,7 @@
 
   collapseBtn.addEventListener('click', () => {
     setCollapsed(true);
-    window.huddle.setCollapsed(true);
+    window.ephor.setCollapsed(true);
   });
   pill.addEventListener('click', (e) => {
     // A press that dragged the pill does not also expand it. Enter and Space
@@ -1077,26 +1077,26 @@
     skipClick = false;
     if (afterDrag) return;
     setCollapsed(false);
-    window.huddle.setCollapsed(false);
+    window.ephor.setCollapsed(false);
   });
 
   // Hide works like the hotkey; Quit ends the app (held prompts go back to
   // Desktop). Main checks that both come from this window.
-  hideBtn.addEventListener('click', () => window.huddle.hide());
-  quitBtn.addEventListener('click', () => window.huddle.quit());
+  hideBtn.addEventListener('click', () => window.ephor.hide());
+  quitBtn.addEventListener('click', () => window.ephor.quit());
 
-  window.huddle.onUiState((state) => {
+  window.ephor.onUiState((state) => {
     if (state && typeof state.hideTitle === 'string') hideBtn.title = state.hideTitle;
     const next = !!(state && state.collapsed === true);
     if (next !== collapsed) setCollapsed(next);
   });
 
   // Main refused an answer or an arm: the card is shown again, unarmed.
-  window.huddle.onAnswerRefused((payload) => {
-    const id = window.HuddlePrompt.refusedId(payload);
+  window.ephor.onAnswerRefused((payload) => {
+    const id = window.EphorPrompt.refusedId(payload);
     const st = id === null ? null : promptStates.get(id);
     if (st && st.refused()) renderWhenFree();
   });
 
-  window.huddle.onSnapshot((snapshot) => hold.push(snapshot));
+  window.ephor.onSnapshot((snapshot) => hold.push(snapshot));
 })();

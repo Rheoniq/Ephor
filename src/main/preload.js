@@ -2,60 +2,60 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('huddle', {
+contextBridge.exposeInMainWorld('ephor', {
   onSnapshot(cb) {
-    ipcRenderer.on('huddle:snapshot', (_event, snapshot) => cb(snapshot));
+    ipcRenderer.on('ephor:snapshot', (_event, snapshot) => cb(snapshot));
   },
   dismiss(id) {
-    ipcRenderer.send('huddle:dismiss', id);
+    ipcRenderer.send('ephor:dismiss', id);
   },
   // { kind: 'desktop', hostSessionId } or { kind: 'terminal', sessionId };
   // main checks it against the last snapshot.
   open(target) {
-    return ipcRenderer.invoke('huddle:open', target);
+    return ipcRenderer.invoke('ephor:open', target);
   },
   reportHeight(h) {
-    ipcRenderer.send('huddle:content-size', h);
+    ipcRenderer.send('ephor:content-size', h);
   },
   setCollapsed(b) {
-    ipcRenderer.send('huddle:set-collapsed', b);
+    ipcRenderer.send('ephor:set-collapsed', b);
   },
   onUiState(cb) {
-    ipcRenderer.on('huddle:ui-state', (_event, state) => cb(state));
+    ipcRenderer.on('ephor:ui-state', (_event, state) => cb(state));
   },
   // { id, kind, answers?, allow? }; main checks it against the held prompt.
   answer(payload) {
-    ipcRenderer.send('huddle:answer', payload);
+    ipcRenderer.send('ephor:answer', payload);
   },
   // The first Allow click of a permission card, by prompt id.
   arm(id) {
-    ipcRenderer.send('huddle:arm', id);
+    ipcRenderer.send('ephor:arm', id);
   },
   // Frees a held prompt by id without answering it and opens the session's
   // app; resolves to 'ok' or 'failed' (main checks the id).
   release(id) {
-    return ipcRenderer.invoke('huddle:release', { id });
+    return ipcRenderer.invoke('ephor:release', { id });
   },
   // Main refused an answer or an arm for this prompt id; the card comes back.
   onAnswerRefused(cb) {
-    ipcRenderer.on('huddle:answer-refused', (_event, id) => cb(id));
+    ipcRenderer.on('ephor:answer-refused', (_event, id) => cb(id));
   },
   // Header buttons: hide like the hotkey; quit the app.
   hide() {
-    ipcRenderer.send('huddle:hide');
+    ipcRenderer.send('ephor:hide');
   },
   quit() {
-    ipcRenderer.send('huddle:quit');
+    ipcRenderer.send('ephor:quit');
   },
   // Dragging the collapsed pill: the pointer's total screen offset since the
   // drag began. Main checks the sender and the numbers.
   dragStart() {
-    ipcRenderer.send('huddle:drag-start');
+    ipcRenderer.send('ephor:drag-start');
   },
   dragTo(dx, dy) {
-    ipcRenderer.send('huddle:drag-to', { dx, dy });
+    ipcRenderer.send('ephor:drag-to', { dx, dy });
   },
   dragEnd() {
-    ipcRenderer.send('huddle:drag-end');
+    ipcRenderer.send('ephor:drag-end');
   },
 });

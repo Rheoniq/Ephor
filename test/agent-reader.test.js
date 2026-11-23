@@ -68,7 +68,7 @@ let dir;
 let file;
 let subDir;
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-agents-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ephor-agents-'));
   file = path.join(dir, 's-1.jsonl');
   subDir = path.join(dir, 's-1', 'subagents');
 });
@@ -800,7 +800,7 @@ test('end to end: the real reader through agentFiles under a temp home, as main 
   const { agentFiles } = require('../src/main/paths');
   const home = path.join(dir, 'home');
   const now = Date.now();
-  const s = sess(SID, 'idle', { cwd: 'C:\\Code\\Huddle' });
+  const s = sess(SID, 'idle', { cwd: 'C:\\Code\\Ephor' });
   const files = agentFiles(home, s);
   fs.mkdirSync(path.dirname(files.transcript), { recursive: true });
   fs.writeFileSync(files.transcript, [launch(A, now - 10 * MIN), launch(B, now - 10 * MIN), enqueue(B)].join('\n') + '\n');

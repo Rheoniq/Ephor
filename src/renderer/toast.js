@@ -1,6 +1,6 @@
 'use strict';
 
-// Huddle toast renderer. The name and kind come from query params and are
+// Ephor toast renderer. The name and kind come from query params and are
 // untrusted: they are only ever set with textContent.
 
 (function () {

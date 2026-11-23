@@ -33,7 +33,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-namespace HuddleWindow {
+namespace EphorWindow {
   public class Found {
     public uint Pid;
     public string HwndText;
@@ -141,7 +141,7 @@ namespace HuddleWindow {
       $ids.Add([uint32]$p)
     }
     if ($ids.Count -eq 0 -or $ids.Count -gt 64) { exit 1 }
-    $rows = @(foreach ($w in [HuddleWindow.Native]::List($ids.ToArray())) {
+    $rows = @(foreach ($w in [EphorWindow.Native]::List($ids.ToArray())) {
       [pscustomobject]@{ pid = [long]$w.Pid; hwnd = $w.HwndText; title = $w.Title; normal = $w.Normal }
     })
     $json = ConvertTo-Json -InputObject $rows -Compress
@@ -158,7 +158,7 @@ namespace HuddleWindow {
     $value = [uint64]0
     if (-not [uint64]::TryParse($hwnd, [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value)) { exit 1 }
     if ($value -eq 0) { exit 1 }
-    exit ([HuddleWindow.Native]::Focus([uint32]$ownerPid, $value))
+    exit ([EphorWindow.Native]::Focus([uint32]$ownerPid, $value))
   }
 
   exit 1

@@ -138,7 +138,7 @@ function permissionResponse(allow) {
   return {
     hookSpecificOutput: {
       hookEventName: 'PermissionRequest',
-      decision: allow ? { behavior: 'allow' } : { behavior: 'deny', message: 'Denied from Huddle' },
+      decision: allow ? { behavior: 'allow' } : { behavior: 'deny', message: 'Denied from Ephor' },
     },
   };
 }

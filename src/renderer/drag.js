@@ -4,7 +4,7 @@
 // so an app-region drag area would swallow that click; instead the renderer
 // tracks the pointer in screen coordinates (createDragTracker) and sends the
 // total offset, and main moves the window (createWindowDrag).
-// Plain script: in the page it sets window.HuddleDrag, under Node it is a
+// Plain script: in the page it sets window.EphorDrag, under Node it is a
 // CommonJS module.
 
 (function (root) {
@@ -175,5 +175,5 @@
     MIN_VISIBLE,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddleDrag = api;
+  else root.EphorDrag = api;
 })(typeof window !== 'undefined' ? window : globalThis);

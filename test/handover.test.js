@@ -29,7 +29,7 @@ test('handoverNotice: shows only for waiting without a held prompt', () => {
     host: 'Zed',
     listLine: 'Answer waiting in Zed',
     kicker: 'Waiting for your answer',
-    text: 'This question is open in Zed. Huddle is not holding it.',
+    text: 'This question is open in Zed. Ephor is not holding it.',
     button: 'Open Zed',
   });
   assert.equal(handoverNotice({ status: 'waiting', hasPrompt: true, source: 'terminal', host: 'Zed' }), null);
@@ -44,7 +44,7 @@ test('handoverNotice: desktop and unknown terminal host', () => {
   assert.equal(d.listLine, 'Answer waiting in Claude Desktop');
   assert.equal(d.button, 'Open Claude Desktop');
   const t = handoverNotice({ status: 'waiting', hasPrompt: false, source: 'terminal', host: '' });
-  assert.equal(t.text, 'This question is open in the terminal. Huddle is not holding it.');
+  assert.equal(t.text, 'This question is open in the terminal. Ephor is not holding it.');
   assert.equal(t.button, 'Open the terminal');
 });
 

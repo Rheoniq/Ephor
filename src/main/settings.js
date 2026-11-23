@@ -1,10 +1,10 @@
 'use strict';
 
-// Huddle's own small settings file. Each field falls back to its default
+// Ephor's own small settings file. Each field falls back to its default
 // when the file is missing, unreadable, malformed or holds a wrong type.
 // terminalAnswering: prompt cards for terminal sessions (off until the live
 // check of hook answers in a terminal has passed).
-// diagnosticLog: write the diagnostic log (huddle-diag.log, diag-log.js); on
+// diagnosticLog: write the diagnostic log (ephor-diag.log, diag-log.js); on
 // by default for now.
 // holdSeconds: how long a prompt card holds a hook before Desktop or the
 // terminal takes over; an integer from 5 to 300, else 60. Read at startup,
@@ -60,7 +60,7 @@ function saveSettings(file, s) {
     };
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
   } catch (err) {
-    console.error(`[huddle] saving settings failed: ${err && err.message ? err.message : err}`);
+    console.error(`[ephor] saving settings failed: ${err && err.message ? err.message : err}`);
   }
 }
 

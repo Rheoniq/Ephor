@@ -2,7 +2,7 @@
 
 // State of one prompt card: which question of an ask is shown, the options
 // picked so far, and the two-click confirm for Allow on a permission prompt.
-// It holds no DOM. Plain script: in the page it sets window.HuddlePrompt,
+// It holds no DOM. Plain script: in the page it sets window.EphorPrompt,
 // under Node it is a CommonJS module.
 
 (function (root) {
@@ -11,7 +11,7 @@
   // arm); the values here are stricter by 200 ms and 500 ms, room for IPC
   // delays, so main rarely refuses what this card sends. Main's clock starts
   // earlier than this card's, which only adds margin. When main does refuse
-  // an answer or an arm, it says so (huddle:answer-refused) and the card
+  // an answer or an arm, it says so (ephor:answer-refused) and the card
   // comes back through refused().
   // A click on a card or question younger than this is ignored: it may have
   // been meant for what was under the cursor before the card appeared.
@@ -23,7 +23,7 @@
   // Prompt ids from main are UUIDs; main ignores ids longer than this.
   const MAX_ID_LEN = 100;
 
-  // The prompt id in a huddle:answer-refused message, or null.
+  // The prompt id in a ephor:answer-refused message, or null.
   function refusedId(payload) {
     return typeof payload === 'string' && payload !== '' && payload.length <= MAX_ID_LEN ? payload : null;
   }
@@ -339,9 +339,9 @@
     return name || 'the terminal';
   }
 
-  // The handover notice for a session that waits for an answer while Huddle
+  // The handover notice for a session that waits for an answer while Ephor
   // holds no card for it: the card was released or timed out, Claude Code
-  // closed the connection, or Huddle never held it (terminal answering off,
+  // closed the connection, or Ephor never held it (terminal answering off,
   // no hooks, a Write, Edit or MCP approval, a prompt the card cannot show,
   // a second prompt, a prompt that came while the panel was hidden or quiet).
   // null for any other session. The only text from outside is the host name;
@@ -353,7 +353,7 @@
       host,
       listLine: `Answer waiting in ${host}`,
       kicker: 'Waiting for your answer',
-      text: `This question is open in ${host}. Huddle is not holding it.`,
+      text: `This question is open in ${host}. Ephor is not holding it.`,
       button: `Open ${host}`,
     };
   }
@@ -412,5 +412,5 @@
     MIN_AGE_MS,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddlePrompt = api;
+  else root.EphorPrompt = api;
 })(typeof window !== 'undefined' ? window : globalThis);

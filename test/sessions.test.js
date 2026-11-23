@@ -44,7 +44,7 @@ function writeJson(file, obj) {
 const allAlive = () => true;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-sessions-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ephor-sessions-'));
 });
 
 afterEach(() => {

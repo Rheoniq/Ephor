@@ -10,7 +10,7 @@ function demoPlan(contents, current) {
   }));
 }
 
-// Fixed fake sessions for HUDDLE_DEMO=1, so the UI can be checked without
+// Fixed fake sessions for EPHOR_DEMO=1, so the UI can be checked without
 // reading ~/.claude. `planItems` are update_plan items as the plan reader
 // returns them (no key means no plan). `pendingAgents` is the number of
 // background agents still running (no key means none); main turns an idle
@@ -99,17 +99,17 @@ function demoSessions() {
   ];
 }
 
-// Fake hook bodies for HUDDLE_DEMO=1: a question prompt (a single-select
+// Fake hook bodies for EPHOR_DEMO=1: a question prompt (a single-select
 // question with three options, then a multi-select one), a permission
 // prompt, and a multi-select question for the terminal session hosted by
 // Zed (its card offers "Answer in Zed"). Main parses them with the real
 // parseHook, so the demo cards follow the same rules as real ones. Nothing
 // is sent anywhere; an answer or a release is only logged.
-// HUDDLE_DEMO_PROMPTS=<id>,<id> keeps only those prompts (for example
+// EPHOR_DEMO_PROMPTS=<id>,<id> keeps only those prompts (for example
 // "demo-ask" for a list with a single session that needs you); empty or
 // unset keeps all of them.
 function demoPrompts(env = process.env) {
-  const only = String(env.HUDDLE_DEMO_PROMPTS || '')
+  const only = String(env.EPHOR_DEMO_PROMPTS || '')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);

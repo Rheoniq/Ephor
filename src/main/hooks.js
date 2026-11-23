@@ -174,7 +174,7 @@ function createHookServer(options) {
     return hold(res, parsed);
   }
 
-  // A body over maxBody is never buffered: Huddle cannot show such a prompt,
+  // A body over maxBody is never buffered: Ephor cannot show such a prompt,
   // so it gets no decision (204). Its rest is read and dropped first, up to
   // drainMax bytes or DRAIN_MS, because a socket closed with unread input is
   // reset and the client then loses the response (seen on Windows). Past
@@ -247,7 +247,7 @@ function createHookServer(options) {
     const path = String(req.url || '').split('?')[0];
     if (path !== HOOK_PATH) return send(res, 404);
     if (req.method !== 'POST') return send(res, 405, '', { Allow: 'POST' });
-    if (!tokenMatches(expected, req.headers['x-huddle-token'])) return send(res, 401);
+    if (!tokenMatches(expected, req.headers['x-ephor-token'])) return send(res, 401);
     return readBody(req, res);
   }
 

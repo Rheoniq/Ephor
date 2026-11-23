@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 
-// hostSessionId as Huddle receives it; checked before it goes into any URL.
+// hostSessionId as Ephor receives it; checked before it goes into any URL.
 const SESSION_ID_RE = /^local_[0-9a-f-]{36}$/;
 
 const FOCUS_SCRIPT = path.join(__dirname, 'focus-claude.ps1');
@@ -193,8 +193,8 @@ function isValidHwnd(hwnd) {
 // comma (or the end of the title).
 const RIGHT_BOUNDARY = /[\s\u2014\u2013|:[\]()/\\,]/u;
 // A letter, mark, digit or underscore continues a name. A hyphen or a dot
-// before the match also does, so "Huddle" does not match "Old-Huddle" or
-// "x.Huddle" as a whole name.
+// before the match also does, so "Ephor" does not match "Old-Ephor" or
+// "x.Ephor" as a whole name.
 const NAME_CHAR = /[\p{L}\p{M}\p{N}_.-]/u;
 
 // The whole character before index i, a surrogate pair included.

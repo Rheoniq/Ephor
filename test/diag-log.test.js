@@ -8,7 +8,7 @@ const path = require('node:path');
 const { createDiagLog, createStateLogger, formatState } = require('../src/main/diag-log');
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-diag-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ephor-diag-'));
 }
 
 const base = {

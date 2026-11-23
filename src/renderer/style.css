@@ -1,4 +1,4 @@
-/* Huddle panel. Warm paper, ink text and one clay accent, used only for
+/* Ephor panel. Warm paper, ink text and one clay accent, used only for
    what needs you and for Allow. Every text color below is at least 4.5:1 on
    the surfaces it sits on, and every control boundary or status mark at
    least 3:1, in both themes. No web fonts. Spacing runs on a 4 px grid with
@@ -613,7 +613,7 @@ button:focus-visible {
 
 /* --- Handover notice (session view, in the card's place) ------------------ */
 
-/* Shown for a waiting session when Huddle holds no card: the question is
+/* Shown for a waiting session when Ephor holds no card: the question is
    open in its app. Same frame and kicker as the prompt card, in the needs-you
    tint, with one button that opens the app. */
 .handover {

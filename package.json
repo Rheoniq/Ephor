@@ -1,6 +1,6 @@
 {
-  "name": "huddle",
-  "productName": "Huddle",
+  "name": "ephor",
+  "productName": "Ephor",
   "version": "0.3.0",
   "description": "Standalone panel showing Claude Code sessions in Claude Desktop and in terminals",
   "main": "src/main/main.js",
@@ -12,8 +12,8 @@
     "dist": "electron-builder --win"
   },
   "build": {
-    "appId": "com.huddle.app",
-    "productName": "Huddle",
+    "appId": "com.ephor.app",
+    "productName": "Ephor",
     "directories": {
       "output": "dist",
       "buildResources": "build"

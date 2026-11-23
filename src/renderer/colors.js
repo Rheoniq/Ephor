@@ -3,7 +3,7 @@
 // Avatar color assignment: no two visible sessions share a palette index
 // while the palette lasts. A session keeps its index for as long as it stays
 // visible; an index is freed when its session leaves. Pure and deterministic.
-// Plain script: in the page it sets window.HuddleColors, under Node it is a
+// Plain script: in the page it sets window.EphorColors, under Node it is a
 // CommonJS module.
 
 (function (root) {
@@ -54,5 +54,5 @@
 
   const api = { assignColors };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.HuddleColors = api;
+  else root.EphorColors = api;
 })(typeof window !== 'undefined' ? window : globalThis);

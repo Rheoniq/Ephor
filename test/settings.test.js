@@ -10,7 +10,7 @@ const { loadSettings, saveSettings } = require('../src/main/settings');
 const DEFAULTS = { hotkey: 'Ctrl+Alt+H', quiet: false, collapsed: false, terminalAnswering: false, holdSeconds: 60, diagnosticLog: true };
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-settings-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ephor-settings-'));
 }
 
 test('missing file gives defaults', () => {
