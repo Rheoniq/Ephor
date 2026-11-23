@@ -53,7 +53,7 @@ const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
 const { createHookServer } = require('./hooks');
 const { parseHook } = require('./prompts');
-const { earlyAbort, abortNoticeText } = require('./early-abort');
+const { endHold, createAbortWatch } = require('./early-abort');
 const {
   promptView,
   buildResponse,
@@ -165,7 +165,9 @@ let answerServer = null; // the hook server, listening or waiting for its port
 let hookServer = null; // set once the server listens
 let answerRetryTimer = null;
 let portNoticeShown = false; // the "port in use" toast shows once per run
-let abortNoticeShown = false; // the "hook timeout is shorter than the hold" toast shows once per run
+// The "hook timeout is shorter than the hold" notice: holds Claude Code
+// closed early, decided at the next refreshes, once per run (early-abort.js).
+const abortWatch = createAbortWatch({ now: () => performance.now() });
 let hookToken = null;
 let answeringNote = null; // tray note when answering is off
 let quitting = false;
@@ -314,10 +316,12 @@ function afterHoldEnded() {
   if (visibility.holdsEnded()) applyCollapsed();
 }
 
-// Ends a held prompt with no decision (204), so Desktop shows its own.
+// Ends a held prompt with no decision (204), so Desktop shows its own. The
+// entry leaves the table before the server is told (endHold): the server
+// calls onCancel at once inside cancelSession, and onCancel must not take a
+// hold main ended for one that Claude Code closed early.
 function cancelHold(entry) {
-  if (hookServer) hookServer.cancelSession(entry.sessionId);
-  prompts.delete(entry.id);
+  endHold(prompts, entry, hookServer ? (sessionId) => hookServer.cancelSession(sessionId) : null);
   afterHoldEnded();
 }
 
@@ -381,28 +385,37 @@ function onPrompt({ id, sessionId, parsed }) {
   // A throw makes the server end the hold with 204.
   if (!view) throw new Error('prompt cannot be shown');
   prompts.set(id, createHold({ id, sessionId, parsed, view, now: performance.now(), holdMs }));
-  console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
-  // A collapsed pill opens so the card can be seen; it closes again when no
-  // hold is left (afterHoldEnded). Not persisted.
-  if (visibility.expandForPrompt()) {
-    pillDrag.end();
-    applyCollapsed();
+  try {
+    console.log(`[huddle] prompt held: ${view.kind} for ${sessionId}`);
+    // A collapsed pill opens so the card can be seen; it closes again when
+    // no hold is left (afterHoldEnded). Not persisted.
+    if (visibility.expandForPrompt()) {
+      pillDrag.end();
+      applyCollapsed();
+    }
+    scheduleRefresh();
+  } catch (err) {
+    // The server ends the hold on a throw: the entry goes first, so that end
+    // is main's own and never counts as an early close.
+    prompts.delete(id);
+    throw err;
   }
-  scheduleRefresh();
 }
 
-// Server callback: a hold ended without an answer from the panel (timeout,
-// client gone, cancelSession, or stop() during before-quit). It must not
-// throw and must not touch a destroyed window.
+// Server callback: a hold ended without an answer from the panel (its hold
+// timer, Claude Code closing the connection, cancelSession, or stop() during
+// before-quit). Holds that main ended itself (answer, release, cancelHold)
+// left the table before the server was told, so they are not found here. An
+// entry still here ended by the hold timer or because Claude Code closed the
+// connection; the watch keeps a close long before holdMs as a candidate for
+// the hook timeout notice. It must not throw and must not touch a destroyed
+// window.
 function onCancel(id) {
   try {
-    // Holds that main ended itself (answer, release, cancel) left the table
-    // before this runs, so an entry still here ended by the hold timer or
-    // because Claude Code closed the connection.
-    const entry = prompts.get(id);
-    if (!prompts.delete(id)) return;
-    if (quitting) return;
-    if (entry) showAbortNotice(entry);
+    const held = prompts.get(id);
+    const status = held ? lastStatus.get(held.sessionId) : undefined;
+    const entry = abortWatch.serverEnded(prompts, id, { quitting, holdMs, status });
+    if (!entry || quitting) return;
     afterHoldEnded();
     scheduleRefresh();
   } catch (err) {
@@ -483,19 +496,37 @@ function showPortNotice() {
   toastQueue.push({ sessionId: null, kind: 'notice', name: `Answering is off: port ${HOOK_PORT} in use` });
 }
 
-// A hold whose connection Claude Code closed at least 2 s before holdMs
-// would have ended: the hook timeout is shorter than the hold. One toast per
-// run (not in quiet mode), and the same line in the log. A hold that ran out
-// at holdMs has no early end and says nothing.
-function showAbortNotice(entry) {
-  const elapsedMs = performance.now() - entry.heldAt;
-  const seconds = earlyAbort({ elapsedMs, holdMs, reason: 'closed' });
-  if (seconds === null || abortNoticeShown) return;
-  abortNoticeShown = true;
-  const text = abortNoticeText(seconds);
-  console.log(`[huddle] ${text}`);
-  if (visibility.isQuiet()) return;
-  toastQueue.push({ sessionId: null, kind: 'notice', name: text });
+// On every refresh: a hold Claude Code closed at least 2 s before holdMs
+// (the hook timeout is shorter than the hold) whose session now waits
+// without a held card, the question open in its app, gets one notice toast
+// per run, and the same line in the log. Quiet mode or a dismissed session
+// suppresses it without using up the once (early-abort.js).
+function checkAbortNotice() {
+  try {
+    abortWatch.refreshed(
+      (sessionId) => {
+        const s = lastKept.find((k) => k.sessionId === sessionId);
+        if (!s) return null;
+        return {
+          status: s.status,
+          held: !!promptFor(sessionId),
+          dismissed: !lastVisible.some((v) => v.sessionId === sessionId),
+        };
+      },
+      (text) => {
+        const toast = { sessionId: null, kind: 'notice', name: text };
+        if (!toastAllowed(toast, toastState())) {
+          console.log(`[huddle] ${text} (quiet mode: no toast)`);
+          return false;
+        }
+        console.log(`[huddle] ${text}`);
+        toastQueue.push(toast);
+        return true;
+      },
+    );
+  } catch (err) {
+    console.error(`[huddle] the hook timeout notice failed: ${err && err.message ? err.message : err}`);
+  }
 }
 
 // Demo only: the fake prompts go into the same table as held ones, so the
@@ -816,6 +847,9 @@ function refreshUnsafe() {
     win.webContents.send('huddle:snapshot', lastSnapshot);
   }
   updateVisibility(count);
+  // After endStaleHolds (in buildSnapshot), so a hold main just ended is
+  // gone from the table and the registry status is fresh.
+  checkAbortNotice();
   // After the window was shown or hidden: the toast gate asks whether the
   // panel is on screen, and a panel that just appeared shows the card itself.
   try {
