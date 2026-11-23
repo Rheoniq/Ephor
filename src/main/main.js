@@ -919,7 +919,8 @@ function pushDemoToast() {
   if (s) pushToast({ sessionId: s.sessionId, name: s.name, kind: 'waiting' }, s.status, true);
 }
 
-// Demo only: expand the waiting buddy, wait for the resize, save a PNG, quit.
+// Demo only: open the waiting session's view (a click on its card), wait for
+// the resize, save a PNG, quit.
 // Never in a packaged build (DEMO_SHOT is unset there).
 async function takeDemoShot() {
   if (!DEMO_SHOT || app.isPackaged) return;

@@ -122,7 +122,22 @@
     return !textLike(ev.target);
   }
 
-  const api = { createViewState, cardKind, escapeGoesBack };
+  // The back button's needs-you cue in the session view: how many OTHER
+  // sessions need the user (`needIds` from needsYou(), minus `openId`), the
+  // number shown in the clay badge ('' for none) and the button's spoken
+  // label. The view never switches to those sessions by itself; this cue is
+  // the notification instead.
+  function backCue(needIds, openId) {
+    const others = new Set();
+    if (Array.isArray(needIds)) {
+      for (const id of needIds) if (typeof id === 'string' && id !== '' && id !== openId) others.add(id);
+    }
+    const count = others.size;
+    if (count === 0) return { count: 0, badge: '', label: 'All sessions' };
+    return { count, badge: String(count), label: `All sessions (${count} ${count === 1 ? 'needs' : 'need'} you)` };
+  }
+
+  const api = { createViewState, cardKind, escapeGoesBack, backCue };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.HuddleView = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -311,6 +311,12 @@
     return name ? `Answer in ${name}` : 'Answer in the terminal';
   }
 
+  // The release button's tooltip, the same for a question and a command:
+  // the prompt is released and the app from releaseLabel opens.
+  function releaseTitle(source, host) {
+    return `Release this prompt and open ${releaseLabel(source, host).slice('Answer in '.length)}`;
+  }
+
   // Whole seconds left of a hold of holdMs (checked like holdMsOf) after
   // elapsedMs, rounded up so the last second reads 1, and never below 0.
   // A negative or junk elapsed time counts as none.
@@ -330,6 +336,7 @@
     refusedId,
     promptDomIds,
     releaseLabel,
+    releaseTitle,
     secondsLeft,
     countdownText,
     holdMsOf,

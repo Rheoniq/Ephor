@@ -7,6 +7,7 @@ const {
   refusedId,
   promptDomIds,
   releaseLabel,
+  releaseTitle,
   secondsLeft,
   countdownText,
   holdMsOf,
@@ -406,6 +407,19 @@ test('promptDomIds escapes every character outside letters, digits and hyphens',
   // Escaping keeps distinct prompt ids apart.
   assert.notEqual(promptDomIds('a b').text, promptDomIds('a_b').text);
   assert.notEqual(promptDomIds('a_20_b').text, promptDomIds('a b').text);
+});
+
+test('releaseTitle says the prompt is released and names the app, for any prompt kind', () => {
+  assert.equal(releaseTitle('terminal', 'Zed'), 'Release this prompt and open Zed');
+  assert.equal(releaseTitle('terminal', '  VS Code '), 'Release this prompt and open VS Code');
+  for (const none of [null, undefined, '', '   ', 42, {}]) {
+    assert.equal(releaseTitle('terminal', none), 'Release this prompt and open the terminal', String(none));
+  }
+  assert.equal(releaseTitle('desktop', 'Zed'), 'Release this prompt and open Claude Desktop');
+  for (const odd of [undefined, null, '', 'Terminal', 42, {}]) {
+    assert.equal(releaseTitle(odd, 'Zed'), 'Release this prompt and open Claude Desktop', String(odd));
+  }
+  assert.doesNotMatch(releaseTitle('desktop'), /question/i);
 });
 
 test('releaseLabel names the app the release opens: the host, the terminal or Claude Desktop', () => {

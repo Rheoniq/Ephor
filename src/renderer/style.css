@@ -466,6 +466,32 @@ button:focus-visible {
 
 .back-btn:active { background: var(--press); }
 
+/* Another session needs you: a clay badge on the back button, in the style
+   of the list's "Needs you" chip, with a dot and the count, so the cue is
+   never color alone. The count is 4.5:1 or more on the badge in both themes,
+   also on a hovered back button. */
+.back-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 0 7px 0 6px;
+  border-radius: 999px;
+  background: var(--chip-wait-bg);
+  color: var(--chip-wait-text);
+  font: 600 11px/18px var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.back-cue-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  /* --clay-text: 3:1 or more on the badge, also on a hovered back button. */
+  background: var(--clay-text);
+}
+
 .sv-top-right {
   min-width: 0;
   display: flex;

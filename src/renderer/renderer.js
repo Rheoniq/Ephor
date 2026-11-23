@@ -344,17 +344,18 @@
     const releaseBtn = el('button', 'release-btn');
     releaseBtn.type = 'button';
     releaseBtn.dataset.role = 'release';
-    releaseBtn.title = 'Hands the question back and opens the app';
+    releaseBtn.title = window.HuddlePrompt.releaseTitle(s.source, s.host);
     releaseBtn.append(icon('external', 14), el('span', 'release-text', label));
     releaseBtn.disabled = released;
     releaseBtn.addEventListener('click', () => {
       // A click on a card younger than MIN_AGE_MS is ignored, like the
       // options. The release stands even if the app does not open. The card
       // turns inert at once (no stale "Confirm allow", no live options); the
-      // next snapshot drops it.
+      // next snapshot drops it. The disabled button cannot keep focus, so it
+      // moves to the back button (Escape still goes back from there).
       if (st.release()) {
         window.huddle.release(id).catch(() => 'failed');
-        render();
+        render({ focus: { sessionId: str(s.sessionId), role: 'back' } });
       }
     });
     const left = el('span', 'prompt-countdown', countdownFor(id));
@@ -534,8 +535,8 @@
     return box;
   }
 
-  // One session: the back arrow ("All sessions"), the host badge and the
-  // open arrow; the avatar and name; the held prompt, if any; the plan.
+  // One session: the back arrow ("All sessions", with a needs-you badge when
+  // another session needs you), the host badge and the open arrow; the avatar and name; the held prompt, if any; the plan.
   // Returns the prompt id of the card shown, or null.
   function renderSession(s, needs) {
     const f = facts(s, needs);
@@ -543,11 +544,22 @@
     sessionView.className = `session-view ${f.status} kind-${f.kind}`;
     sessionView.setAttribute('aria-label', f.name);
 
-    const back = el('button', 'back-btn');
+    // A prompt or a wait on another session never switches the view; the
+    // back button carries it instead: a clay badge with a dot and the count
+    // (visible), and the count in the spoken label.
+    const cue = window.HuddleView.backCue([...needs], f.id);
+    const back = el('button', cue.count ? 'back-btn has-cue' : 'back-btn');
     back.type = 'button';
     back.dataset.role = 'back';
-    back.title = 'Back to all sessions';
+    back.setAttribute('aria-label', cue.label);
+    back.title = cue.count ? cue.label.replace('All sessions', 'Back to all sessions') : 'Back to all sessions';
     back.append(icon('arrow-left'), el('span', 'back-text', 'All sessions'));
+    if (cue.count) {
+      const badge = el('span', 'back-cue');
+      badge.setAttribute('aria-hidden', 'true');
+      badge.append(el('span', 'back-cue-dot'), el('span', 'back-cue-count', cue.badge));
+      back.append(badge);
+    }
     back.addEventListener('click', () => goBack(true));
     const right = el('div', 'sv-top-right');
     const badge = hostBadge(f);

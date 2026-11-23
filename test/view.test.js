@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createViewState, cardKind, escapeGoesBack } = require('../src/renderer/view');
+const { createViewState, cardKind, escapeGoesBack, backCue } = require('../src/renderer/view');
 
 // Snapshot sessions as the view state needs them: an id, an optional prompt
 // and a status.
@@ -223,6 +223,35 @@ test('cardKind: needs you wins over finished and busy; then finished; then the s
   for (const odd of [{ status: 'weird' }, { status: 7 }, {}, null, undefined]) {
     assert.equal(cardKind(odd, false), 'idle', JSON.stringify(odd));
   }
+});
+
+test('backCue: nothing when no other session needs you', () => {
+  const none = { count: 0, badge: '', label: 'All sessions' };
+  assert.deepEqual(backCue([], 'a'), none);
+  assert.deepEqual(backCue(['a'], 'a'), none, 'the open session itself does not count');
+});
+
+test('backCue: counts the other sessions that need you, with a visible number and a spoken label', () => {
+  assert.deepEqual(backCue(['a', 'b'], 'b'), { count: 1, badge: '1', label: 'All sessions (1 needs you)' });
+  assert.deepEqual(backCue(['a', 'b', 'c'], 'b'), { count: 2, badge: '2', label: 'All sessions (2 need you)' });
+  assert.deepEqual(backCue(['a', 'c'], 'b'), { count: 2, badge: '2', label: 'All sessions (2 need you)' });
+  assert.equal(backCue(['a', 'a', 'c'], 'b').count, 2, 'a repeated id counts once');
+});
+
+test('backCue: from the view state, a prompt on another session shows on the back button', () => {
+  const v = createViewState();
+  v.sync([s('a'), s('b')]);
+  v.open('b');
+  v.sync([s('a', { prompt: PROMPT }), s('b')]);
+  assert.deepEqual(v.current(), { kind: 'session', sessionId: 'b' }, 'the view never switches by itself');
+  assert.equal(backCue(v.needsYou(), 'b').count, 1);
+});
+
+test('backCue: junk input is no cue', () => {
+  for (const junk of [undefined, null, 'ab', 7, {}]) {
+    assert.deepEqual(backCue(junk, 'a'), { count: 0, badge: '', label: 'All sessions' }, String(junk));
+  }
+  assert.equal(backCue(['a', null, 7, '', {}], 'b').count, 1, 'only non-empty string ids count');
 });
 
 // A keydown as escapeGoesBack reads it: the key, the modifiers, IME
