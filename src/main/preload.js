@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('ephor', {
   setCollapsed(b) {
     ipcRenderer.send('ephor:set-collapsed', b);
   },
+  setAnswering(b) {
+    ipcRenderer.send('ephor:set-answering', b);
+  },
   onUiState(cb) {
     ipcRenderer.on('ephor:ui-state', (_event, state) => cb(state));
   },

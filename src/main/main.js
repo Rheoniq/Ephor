@@ -53,6 +53,7 @@ const { createVisibility, toastAllowed, keepsWhilePanelSeen } = require('./visib
 const { createRendererHealth } = require('./health');
 const { createEventDetector } = require('./events');
 const { createToastQueue } = require('./toast');
+const { attentionCounts, attentionKey, badgeKind, trayTooltip, drawBadge } = require('./attention');
 const { createHookServer } = require('./hooks');
 const { parseHook } = require('./prompts');
 const { endHold, createAbortWatch } = require('./early-abort');
@@ -102,7 +103,7 @@ const MARGIN = 12;
 const TOAST_WIDTH = 340;
 const TOAST_HEIGHT = 64;
 const TOAST_GAP = 8;
-const TOAST_MS = 4000;
+const TOAST_MS = 5000;
 
 // Answering prompts from the panel: Claude Code http hooks post to this
 // localhost port. A held hook ends after holdMs with no decision, so
@@ -468,10 +469,49 @@ function onCancel(id) {
   }
 }
 
+// What waits or finished (from the shown sessions) shows in the tooltip and
+// as a dot on the tray icon, so a hidden or collapsed panel still signals.
+let attention = { waiting: 0, finished: 0 };
+let attentionApplied = null; // attentionKey of what the tray shows now
+const trayImages = new Map(); // badge kind (or 'none') -> nativeImage
+
+function trayImage(kind) {
+  const key = kind || 'none';
+  if (trayImages.has(key)) return trayImages.get(key);
+  let image = nativeImage.createFromPath(ICON_PATH);
+  if (!image.isEmpty()) {
+    image = image.resize({ width: 16, height: 16 });
+    if (kind) {
+      try {
+        const size = image.getSize();
+        const bitmap = drawBadge(Buffer.from(image.toBitmap()), size.width, size.height, kind);
+        image = nativeImage.createFromBitmap(bitmap, { width: size.width, height: size.height });
+      } catch (err) {
+        console.error(`[ephor] tray badge failed: ${err && err.message ? err.message : err}`);
+        image = nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 });
+      }
+    }
+  }
+  trayImages.set(key, image);
+  return image;
+}
+
+// Sets tooltip and icon when the state differs from what the tray shows.
+// `sessions` is the snapshot's list; without it the last counts are reused.
+function applyAttention(sessions) {
+  if (sessions) attention = attentionCounts(sessions);
+  const key = attentionKey(attention, answeringNote);
+  if (key === attentionApplied || !tray || tray.isDestroyed()) return;
+  attentionApplied = key;
+  tray.setToolTip(trayTooltip(attention, answeringNote));
+  const image = trayImage(badgeKind(attention));
+  if (!image.isEmpty()) tray.setImage(image);
+}
+
 // The tray note and tooltip say when answering is off.
 function updateTray() {
   rebuildTrayMenu();
-  if (tray && !tray.isDestroyed()) tray.setToolTip(answeringNote ? `Ephor\n${answeringNote}` : 'Ephor');
+  applyAttention();
 }
 
 async function startAnswering() {
@@ -758,6 +798,7 @@ function sendUiState() {
   if (!win || win.isDestroyed()) return;
   win.webContents.send('ephor:ui-state', {
     collapsed: visibility.isCollapsed(),
+    answering: visibility.isAnswering(),
     hideTitle: hideTitle(hotkeyNote ? null : settings.hotkey),
   });
 }
@@ -857,6 +898,17 @@ function setQuiet(quiet) {
   rebuildTrayMenu();
 }
 
+// The top-bar toggle and tray checkbox "Answer in Ephor". Turned off, open
+// cards go back to Claude Desktop with no decision. Toasts are not touched.
+function setAnswering(on) {
+  visibility.setAnswering(on);
+  settings.answering = visibility.isAnswering();
+  if (!settings.answering) cancelAllHolds();
+  persistSettings();
+  rebuildTrayMenu();
+  sendUiState();
+}
+
 function registerHotkey() {
   const accel = settings.hotkey;
   let ok = false;
@@ -892,6 +944,7 @@ function refreshUnsafe() {
     win.webContents.send('ephor:snapshot', lastSnapshot);
   }
   updateVisibility(count);
+  applyAttention(lastSnapshot.sessions);
   // After endStaleHolds (in buildSnapshot), so a hold main just ended is
   // gone from the table and the registry status is fresh.
   checkAbortNotice();
@@ -1123,6 +1176,12 @@ function trayMenu() {
       checked: visibility.isQuiet(),
       click: (item) => setQuiet(item.checked),
     },
+    {
+      label: 'Answer in Ephor',
+      type: 'checkbox',
+      checked: visibility.isAnswering(),
+      click: (item) => setAnswering(item.checked),
+    },
     { type: 'separator' },
     {
       label: 'Start at login',
@@ -1159,6 +1218,7 @@ function createTray() {
   if (image.isEmpty()) console.error(`[ephor] tray icon missing: ${ICON_PATH}`);
   tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
   tray.setToolTip('Ephor');
+  attentionApplied = null; // the next refresh sets tooltip and badge
   tray.setContextMenu(trayMenu());
 }
 
@@ -1231,6 +1291,12 @@ ipcMain.on('ephor:set-collapsed', (event, collapsed) => {
   if (typeof collapsed !== 'boolean') return;
   // Only the collapse button and the pill send this: a user action.
   setCollapsedByUser(collapsed);
+});
+
+ipcMain.on('ephor:set-answering', (event, on) => {
+  if (!fromOurWindow(event)) return;
+  if (typeof on !== 'boolean') return;
+  setAnswering(on);
 });
 
 // Tells the renderer that main refused an answer or an arm for a held
@@ -1393,7 +1459,11 @@ if (!app.requestSingleInstanceLock()) {
       diagLog = createDiagLog({ file: path.join(app.getPath('userData'), 'ephor-diag.log') });
       diagLine(`start v${APP_VERSION} pid=${process.pid}`);
     }
-    visibility = createVisibility({ collapsed: settings.collapsed, quiet: settings.quiet });
+    visibility = createVisibility({
+      collapsed: settings.collapsed,
+      quiet: settings.quiet,
+      answering: settings.answering,
+    });
     registerHotkey();
     if (DEMO) loadDemoPrompts();
     createWindow();

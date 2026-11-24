@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Header toggle and tray item "Answer in Ephor": turn it off to leave questions and approvals to Claude Desktop while the panel keeps running.
+- Collapsed pill shows a green check for finished sessions next to the "!" for waiting ones.
+- Tray icon dot and tooltip counts for waiting and finished sessions, also while the panel is hidden.
+- Toasts stay 5 seconds instead of 4.
+
 ## 0.3.0
 
 - Renamed Huddle to Ephor, with a new icon.

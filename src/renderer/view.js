@@ -202,7 +202,18 @@
     return { onSnapshot, onDue, clear, owedFor: () => owed };
   }
 
-  const api = { createViewState, cardKind, escapeGoesBack, backCue, returnStep, createReturnState };
+  // The ids of the sessions whose card reads 'finished' (idle, finished, no
+  // prompt), in snapshot order and without repeats: the pill's check badge.
+  function finishedIds(sessions) {
+    const out = [];
+    for (const s of Array.isArray(sessions) ? sessions : []) {
+      const id = idOf(s);
+      if (id !== null && !out.includes(id) && cardKind(s, hasPrompt(s)) === 'finished') out.push(id);
+    }
+    return out;
+  }
+
+  const api = { createViewState, cardKind, finishedIds, escapeGoesBack, backCue, returnStep, createReturnState };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.EphorView = api;
 })(typeof window !== 'undefined' ? window : globalThis);

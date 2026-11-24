@@ -92,6 +92,27 @@ test('canHold is false when quiet', () => {
   assert.equal(v.canHold(), false);
 });
 
+test('answering is on by default and canHold is false when it is off', () => {
+  const v = fresh();
+  assert.equal(v.isAnswering(), true);
+  assert.equal(v.canHold(), true);
+  v.setAnswering(false);
+  assert.equal(v.isAnswering(), false);
+  assert.equal(v.canHold(), false);
+  v.setAnswering(true);
+  assert.equal(v.canHold(), true);
+  assert.equal(createVisibility({ answering: false }).isAnswering(), false);
+  assert.equal(createVisibility({ answering: false }).canHold(), false);
+});
+
+test('answering off does not change quiet or the toast gate', () => {
+  const v = fresh();
+  v.setAnswering(false);
+  assert.equal(v.isQuiet(), false);
+  const { shouldToast } = require('../src/main/visibility');
+  assert.equal(shouldToast({ quiet: v.isQuiet(), hidden: true, collapsed: false, windowVisible: true }), true);
+});
+
 test('canHold is true when only collapsed', () => {
   const v = fresh();
   v.setCollapsed(true);

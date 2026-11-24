@@ -96,11 +96,13 @@ Claude Code sessions running in Zed, VS Code, Cursor, JetBrains or any terminal 
 - **Quit** (power icon, leftmost in the header): closes Ephor at once, with no confirmation. Held prompts go back to Desktop. A mis-click ends answering from the panel until you start Ephor again.
 - **Hide** (cross in the header): hides the panel, the same as the hotkey. Held prompts are released, so Desktop shows its own prompt. Hidden is not kept across restarts. The tray item "Panel hidden" shows the state and toggles it.
 - **Hotkey:** `Ctrl+Alt+H` hides and shows the panel. It ignores a hide request when nothing is on screen. If the hotkey cannot be registered, the tray shows a note and the tray item still works.
-- **Collapse:** the collapse button (or tray "Collapse panel") shrinks the panel to one pill with the session count and a "!" dot when a session waits. A collapse by hand hands every open prompt back to Desktop.
+- **Collapse:** the collapse button (or tray "Collapse panel") shrinks the panel to one pill with the session count and a "!" dot when a session waits and a green check when a session has finished. A collapse by hand hands every open prompt back to Desktop.
   - Click the pill to expand it. Press and drag to move it (it moves only after 4 px; at least 24 px stays on screen). The pill position is not saved across restarts.
   - The expanded panel moves by its header. On expand, the panel is fitted inside the screen's work area.
   - A prompt expands the pill by itself and collapses it again afterwards, without changing the saved setting.
 - **Quiet mode** (tray): silences toasts and stops the panel from holding prompts; Desktop handles them.
+- **Answer in Ephor** (speech-bubble button in the header, and tray checkbox): on by default. Turned off, Ephor holds no questions or approvals, so Desktop or the terminal shows its own prompt at once, and open cards go back to them. The panel, status, plan bars and toasts keep working. The state is saved in `settings.json` (`answering`). Unlike quiet mode it does not silence toasts.
+- **Tray signal:** the tray icon gets a dot while a session waits (orange) or has finished (green), waiting first, and the tooltip lists the counts, for example "1 waiting, 2 finished". It works with the panel hidden or collapsed.
 
 ## Toasts
 
@@ -108,7 +110,7 @@ A small window says "needs you" when a session starts waiting and "finished" whe
 
 - It shows only while you cannot see the panel: hidden (hotkey, tray or Hide button) or collapsed to the pill. Opening the panel clears any toast showing or waiting.
 - With the panel open, the session's card in the list is the notification. In the session view of another session, the badge on the back arrow is the notification (see [List and session view](#list-and-session-view)); no toast shows then either.
-- It shows for 4 seconds.
+- It shows for 5 seconds.
 - Its close cross is the only clickable part. The rest lets clicks through and never takes focus.
 - It sits below the panel or pill, or above it when there is no room below. While the panel is hidden, it sits in the top-right corner of the display.
 - Quiet mode silences toasts. Dismissed sessions get none.
@@ -184,10 +186,10 @@ Without the hooks or the token, Ephor works as a viewer and Desktop shows every 
 Ephor keeps its files in `%APPDATA%\Ephor`: `settings.json` and the token file `hook-token`. Electron names the folder after the product name. A folder first created as `%APPDATA%\ephor` keeps that spelling; Windows ignores case, so both are the same folder.
 
 ```
-{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "terminalAnswering": false, "holdSeconds": 60, "diagnosticLog": true }
+{ "hotkey": "Ctrl+Alt+H", "quiet": false, "collapsed": false, "answering": true, "terminalAnswering": false, "holdSeconds": 60, "diagnosticLog": true }
 ```
 
-`hotkey` takes an Electron accelerator string. `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see [Answering from the panel](#answering-from-the-panel)). `diagnosticLog` writes the [diagnostic log](#diagnostic-log) (`true`, the default for now); the tray checkbox "Write diagnostic log" sets it too. Restart Ephor after editing the file by hand. A missing or broken value falls back to its default.
+`hotkey` takes an Electron accelerator string. `answering` is the "Answer in Ephor" toggle (`true`, the default). `terminalAnswering` turns prompt cards for terminal sessions on (`true`) or off (`false`, the default); the tray checkbox "Answer terminal prompts" sets it too. `holdSeconds` is how long a prompt card holds the hook before Desktop or the terminal takes over: a whole number from 5 to 300, 60 by default; it has no tray item, and a change takes effect only after a restart. Keep the hook `timeout` in `~/.claude/settings.json` above it (see [Answering from the panel](#answering-from-the-panel)). `diagnosticLog` writes the [diagnostic log](#diagnostic-log) (`true`, the default for now); the tray checkbox "Write diagnostic log" sets it too. Restart Ephor after editing the file by hand. A missing or broken value falls back to its default.
 
 ## Diagnostic log
 
