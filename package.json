@@ -1,7 +1,7 @@
 {
   "name": "ephor",
   "productName": "Ephor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Standalone panel showing Claude Code sessions in Claude Desktop and in terminals",
   "main": "src/main/main.js",
   "private": true,

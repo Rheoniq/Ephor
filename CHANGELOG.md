@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-24)
 
 - Header toggle and tray item "Answer in Ephor": turn it off to leave questions and approvals to Claude Desktop while the panel keeps running.
 - Collapsed pill shows a green check for finished sessions next to the "!" for waiting ones.
