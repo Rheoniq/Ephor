@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `npm run get-release` downloads the latest GitHub release into `dist/`.
+
 ## 0.4.0 (2026-11-24)
 
 - Header toggle and tray item "Answer in Ephor": turn it off to leave questions and approvals to Claude Desktop while the panel keeps running.
