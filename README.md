@@ -49,6 +49,12 @@ To build the Windows installer and portable exe:
 npm run dist
 ```
 
+To get the installer and portable exe of the latest GitHub release into `dist/` without building (needs the GitHub CLI, signed in):
+
+```powershell
+npm run get-release
+```
+
 ## Turn on answering
 
 Answering needs the token in the user environment variable `EPHOR_HOOK_TOKEN` and two hook entries with `"timeout": 70`. The exact steps are in [docs/hook-setup.md](docs/hook-setup.md). Use the tray item "Copy token setup command", run the line it gives you, then restart Claude Desktop and your terminals.
