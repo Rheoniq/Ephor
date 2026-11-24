@@ -10,6 +10,8 @@ function createVisibility(initial) {
   let hidden = false;
   let collapsed = !!(initial && initial.collapsed);
   let quiet = !!(initial && initial.quiet);
+  // "Answer in Ephor": off, nothing is held, but toasts are unaffected.
+  let answering = !(initial && initial.answering === false);
   let autoExpanded = false; // the pill was opened by a prompt, not the user
 
   // Returns true when the state changed. Hiding needs the window on screen:
@@ -52,6 +54,10 @@ function createVisibility(initial) {
     setQuiet(b) {
       quiet = !!b;
     },
+    setAnswering(b) {
+      answering = !!b;
+    },
+    isAnswering: () => answering,
     isHidden: () => hidden,
     isCollapsed: () => collapsed,
     isAutoExpanded: () => autoExpanded,
@@ -59,7 +65,7 @@ function createVisibility(initial) {
     shouldShowWindow: (sessionCount) => !hidden && sessionCount > 0,
     // Collapsed does not block holding: the caller opens the pill on a
     // prompt (expandForPrompt).
-    canHold: () => !hidden && !quiet,
+    canHold: () => !hidden && !quiet && answering,
   };
 }
 

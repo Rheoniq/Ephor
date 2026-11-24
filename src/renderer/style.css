@@ -153,6 +153,16 @@ button:focus-visible {
 
 .icon-btn:active { background: var(--press); }
 
+/* "Answer in Ephor": on is a filled-chip button in the normal text color; off
+   is dimmed with a slash through the bubble. */
+.answering { color: var(--fg); background: var(--chip); }
+.answering .slash { display: none; }
+.answering[aria-pressed="false"] { color: var(--muted); background: transparent; }
+.answering[aria-pressed="false"] .icon { opacity: 0.7; }
+.answering[aria-pressed="false"] .slash { display: inline; }
+.answering:hover { background: var(--hover); color: var(--fg); }
+.answering:active { background: var(--press); }
+
 /* --- Header ------------------------------------------------------------ */
 
 /* Quit at the far left, away from Collapse and Hide at the right, so it is
@@ -933,6 +943,21 @@ button:focus-visible {
 }
 
 .pill-alert[hidden] { display: none; }
+
+/* Green check: a session finished and not looked at yet. The mark is dark
+   on the green, as the "!" is on the clay. */
+.pill-done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--busy);
+  color: var(--on-clay);
+}
+
+.pill-done[hidden] { display: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   .buddy-body,

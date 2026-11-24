@@ -459,3 +459,21 @@ test('return: due for another session or with nothing owed does nothing', () => 
   r.clear();
   assert.equal(r.owedFor(), null);
 });
+
+test('finishedIds lists idle finished sessions without a prompt, once each', () => {
+  const { finishedIds } = require('../src/renderer/view');
+  assert.deepEqual(
+    finishedIds([
+      s('a', { status: 'idle', finished: true }),
+      s('b', { status: 'idle', finished: true, prompt: PROMPT }),
+      s('c', { status: 'busy', finished: true }),
+      s('d', { status: 'waiting', finished: true }),
+      s('e', { status: 'idle', finished: false }),
+      s('a', { status: 'idle', finished: true }),
+      s('f', { status: 'idle', finished: true }),
+      null,
+    ]),
+    ['a', 'f'],
+  );
+  assert.deepEqual(finishedIds(undefined), []);
+});

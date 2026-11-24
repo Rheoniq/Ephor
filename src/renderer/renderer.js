@@ -34,11 +34,13 @@
   const sessionView = document.getElementById('session-view');
   const count = document.getElementById('count');
   const collapseBtn = document.getElementById('collapse');
+  const answeringBtn = document.getElementById('answering');
   const hideBtn = document.getElementById('hide');
   const quitBtn = document.getElementById('quit');
   const pill = document.getElementById('pill');
   const pillCount = document.getElementById('pill-count');
   const pillAlert = document.getElementById('pill-alert');
+  const pillDone = document.getElementById('pill-done');
   const view = window.EphorView.createViewState();
   const returns = window.EphorView.createReturnState();
   const promptStates = new Map(); // prompt id -> EphorPrompt state
@@ -54,6 +56,7 @@
   // share a color. Updated on each render by EphorColors.
   let colorOf = new Map();
   let collapsed = false; // set by main through onUiState
+  let answering = true; // "Answer in Ephor", set by main through onUiState
   let armTimer = null;
   let returnTimer = null; // the delay before the owed return, while it runs
   let countdownTimer = null;
@@ -838,8 +841,12 @@
       // Pill only: the session count and a "!" when any session needs you.
       pillCount.textContent = String(sessions.length);
       pillAlert.hidden = needs.size === 0;
-      const label = `Expand panel, ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
-      pill.setAttribute('aria-label', needs.size ? `${label}, ${needs.size} waiting for you` : label);
+      const doneIds = window.EphorView.finishedIds(sessions);
+      pillDone.hidden = doneIds.length === 0;
+      let label = `Expand panel, ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
+      if (needs.size) label += `, ${needs.size} waiting for you`;
+      if (doneIds.length) label += `, ${doneIds.length} finished`;
+      pill.setAttribute('aria-label', label);
       list.replaceChildren();
       sessionView.replaceChildren();
       lastCardId = null;
@@ -1085,8 +1092,24 @@
   hideBtn.addEventListener('click', () => window.ephor.hide());
   quitBtn.addEventListener('click', () => window.ephor.quit());
 
+  function showAnswering(on) {
+    answering = on;
+    answeringBtn.setAttribute('aria-pressed', String(on));
+    answeringBtn.title = on ? 'Answer in Ephor: on' : 'Answer in Ephor: off';
+  }
+
+  // Focus stays on the button: only the attributes change.
+  answeringBtn.addEventListener('click', () => {
+    const next = !answering;
+    showAnswering(next);
+    window.ephor.setAnswering(next);
+  });
+
   window.ephor.onUiState((state) => {
     if (state && typeof state.hideTitle === 'string') hideBtn.title = state.hideTitle;
+    if (state && typeof state.answering === 'boolean' && state.answering !== answering) {
+      showAnswering(state.answering);
+    }
     const next = !!(state && state.collapsed === true);
     if (next !== collapsed) setCollapsed(next);
   });

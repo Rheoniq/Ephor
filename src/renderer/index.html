@@ -12,12 +12,14 @@
     <button type="button" class="icon-btn quit" id="quit" data-role="quit" aria-label="Quit Ephor" title="Quit Ephor"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M7 6a7.75 7.75 0 1 0 10 0"/><path d="M12 4v8"/></svg></button>
     <span class="handle-title">Ephor</span>
     <span class="handle-count" id="count"></span>
+    <button type="button" class="icon-btn answering" id="answering" data-role="answering" aria-label="Answer in Ephor" aria-pressed="true" title="Answer in Ephor: on"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path class="slash" d="M4 20 20 4"/></svg></button>
     <button type="button" class="icon-btn collapse" id="collapse" data-role="collapse" aria-label="Collapse panel" title="Collapse to a pill"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg></button>
     <button type="button" class="icon-btn hide" id="hide" data-role="hide" aria-label="Hide panel" title="Hide panel (the hotkey shows it again)"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
   </header>
   <button type="button" class="pill" id="pill" data-role="pill" aria-label="Expand panel">
     <span class="pill-count" id="pill-count"></span>
     <span class="pill-alert" id="pill-alert" aria-hidden="true" hidden>!</span>
+    <span class="pill-done" id="pill-done" aria-hidden="true" hidden><svg viewBox="0 0 16 16" width="10" height="10" focusable="false"><path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
   </button>
   <ul class="buddies" id="buddies" aria-label="Sessions"></ul>
   <section class="session-view" id="session-view" hidden></section>
